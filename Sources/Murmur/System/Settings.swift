@@ -54,6 +54,10 @@ final class AppSettings {
     @ObservationIgnored private var secretWrites: [String: Task<Void, Never>] = [:]
 
     var shortcut: Shortcut { didSet { store(shortcut, "shortcut") } }
+    var translateShortcut: Shortcut { didSet { store(translateShortcut, "translate.shortcut") } }
+    /// The language translations go into, as the model is told it.
+    var translateLanguage: String { didSet { defaults.set(translateLanguage, forKey: "translate.language") } }
+    var translatePrompt: String { didSet { defaults.set(translatePrompt, forKey: "translate.prompt") } }
     var doubaoAuth: DoubaoAuth { didSet { defaults.set(doubaoAuth.rawValue, forKey: "doubao.auth") } }
     var doubaoAppID: String { didSet { defaults.set(doubaoAppID, forKey: "doubao.appID") } }
     var doubaoResource: String { didSet { defaults.set(doubaoResource, forKey: "doubao.resource") } }
@@ -71,6 +75,10 @@ final class AppSettings {
 
     private init() {
         shortcut = (defaults.data(forKey: "shortcut")).flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .default
+        translateShortcut = (defaults.data(forKey: "translate.shortcut")).flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) }
+            ?? .translateDefault
+        translateLanguage = defaults.string(forKey: "translate.language") ?? TranslatePrompt.defaultLanguage
+        translatePrompt = defaults.string(forKey: "translate.prompt") ?? TranslatePrompt.defaultInstructions
         doubaoAuth = DoubaoAuth(rawValue: defaults.string(forKey: "doubao.auth") ?? "") ?? .apiKey
         doubaoAppID = defaults.string(forKey: "doubao.appID") ?? ""
         doubaoResource = defaults.string(forKey: "doubao.resource") ?? DoubaoAPI.defaultResource

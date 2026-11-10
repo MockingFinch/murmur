@@ -2,15 +2,34 @@ import AppKit
 import MurmurCore
 import SwiftUI
 
-/// The dictation shortcut, installed or set aside (while it's being re-recorded).
+/// Murmur's two global shortcuts: one dictates, one dictates and
+/// translates. Each is installed, or set aside while it's re-recorded.
 @MainActor
-enum ToggleHotkey {
-    @discardableResult
-    static func install(_ shortcut: Shortcut) -> Bool {
-        Hotkeys.shared.register(.toggle, shortcut) { DictationEngine.shared.toggle() }
+enum AppHotkey: CaseIterable {
+    case dictate, translate
+
+    private var id: Hotkeys.ID { self == .dictate ? .toggle : .translate }
+    var intent: DictationEngine.Intent { self == .dictate ? .dictate : .translate }
+    var defaultShortcut: Shortcut { self == .dictate ? .default : .translateDefault }
+    /// What the other shortcut is for, to explain a clash.
+    var role: String { self == .dictate ? "dictation" : "translation" }
+
+    var shortcut: Shortcut {
+        get { self == .dictate ? AppSettings.shared.shortcut : AppSettings.shared.translateShortcut }
+        nonmutating set {
+            if self == .dictate { AppSettings.shared.shortcut = newValue } else { AppSettings.shared.translateShortcut = newValue }
+        }
     }
 
-    static func suspend() { Hotkeys.shared.unregister(.toggle) }
+    var other: AppHotkey { self == .dictate ? .translate : .dictate }
+
+    @discardableResult
+    func install(_ shortcut: Shortcut) -> Bool {
+        let intent = self.intent
+        return Hotkeys.shared.register(id, shortcut) { DictationEngine.shared.press(intent) }
+    }
+
+    func suspend() { Hotkeys.shared.unregister(id) }
 }
 
 @MainActor
@@ -33,10 +52,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         engine.openSettings = { [weak self] page in self?.showSettings(page) }
         engine.onStateChange = { [weak self] state in self?.reflect(state) }
 
-        let installed = ToggleHotkey.install(settings.shortcut)
+        let dictates = AppHotkey.dictate.install(settings.shortcut)
+        let translates = AppHotkey.translate.install(settings.translateShortcut)
         let ready = settings.speechReady && Permissions.microphone == .authorized && Permissions.accessibility
-        if !installed {
+        if !dictates {
             showSettings(.shortcut)
+        } else if !translates {
+            showSettings(.translate)
         } else if !ready {
             showSettings(.overview)
         }
@@ -85,22 +107,38 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(header)
         menu.addItem(.separator())
 
-        let listening = engine.state == .listening
-        let toggle = NSMenuItem(title: listening ? "Stop and Insert" : "Start Dictation", action: #selector(toggleFromMenu), keyEquivalent: "")
-        toggle.target = self
-        toggle.image = NSImage(systemSymbolName: listening ? "stop.circle" : "mic", accessibilityDescription: nil)
-        toggle.toolTip = "Or press \(settings.shortcut.display) anywhere"
-        toggle.isEnabled = engine.state == .idle || listening
-        menu.addItem(toggle)
+        if engine.state == .listening {
+            let translating = engine.intent == .translate
+            let stop = NSMenuItem(title: translating ? "Stop and Translate" : "Stop and Insert",
+                                  action: #selector(dictateFromMenu), keyEquivalent: "")
+            stop.target = self
+            stop.image = NSImage(systemSymbolName: "stop.circle", accessibilityDescription: nil)
+            menu.addItem(stop)
+        } else {
+            let idle = engine.state == .idle
+            let dictate = NSMenuItem(title: "Start Dictation", action: #selector(dictateFromMenu), keyEquivalent: "")
+            dictate.target = self
+            dictate.image = NSImage(systemSymbolName: "mic", accessibilityDescription: nil)
+            dictate.toolTip = "Or press \(settings.shortcut.display) anywhere"
+            dictate.isEnabled = idle
+            menu.addItem(dictate)
+            let translate = NSMenuItem(title: "Dictate and Translate", action: #selector(translateFromMenu), keyEquivalent: "")
+            translate.target = self
+            translate.image = NSImage(systemSymbolName: "translate", accessibilityDescription: nil)
+            translate.toolTip = "Or press \(settings.translateShortcut.display) anywhere"
+            translate.isEnabled = idle
+            menu.addItem(translate)
+        }
         if engine.state != .idle {
             let cancel = NSMenuItem(title: "Cancel", action: #selector(cancelFromMenu), keyEquivalent: "")
             cancel.target = self
             menu.addItem(cancel)
         }
 
-        let shortcut = NSMenuItem(title: "Shortcut: \(settings.shortcut.display)", action: nil, keyEquivalent: "")
-        shortcut.isEnabled = false
-        menu.addItem(shortcut)
+        let shortcuts = NSMenuItem(title: "\(settings.shortcut.display) dictate · \(settings.translateShortcut.display) translate",
+                                   action: nil, keyEquivalent: "")
+        shortcuts.isEnabled = false
+        menu.addItem(shortcuts)
         menu.addItem(.separator())
 
         let today = UsageStore.shared.summary.today
@@ -118,9 +156,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "Quit Murmur", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
-    @objc private func toggleFromMenu() {
+    @objc private func dictateFromMenu() { pressFromMenu(.dictate) }
+
+    @objc private func translateFromMenu() { pressFromMenu(.translate) }
+
+    private func pressFromMenu(_ intent: DictationEngine.Intent) {
         // Let the menu close and the previous app regain focus first.
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { DictationEngine.shared.toggle() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { DictationEngine.shared.press(intent) }
     }
 
     @objc private func cancelFromMenu() { engine.cancel() }

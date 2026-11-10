@@ -77,7 +77,7 @@ struct PolishPage: View {
         }
 
         PageSection(title: "Try it") {
-            Card { TryIt() }
+            Card { TryIt(job: .polish) }
         }
     }
 
@@ -165,18 +165,30 @@ enum Price {
 
 /// The real request, on a sample: the quickest way to see the prompt and
 /// the model work together.
-private struct TryIt: View {
+struct TryIt: View {
+    enum Job { case polish, translate }
+
+    let job: Job
     private let settings = AppSettings.shared
-    @State private var input = "嗯，那个，我觉得这个方案呢其实还可以，就是那个时间上可能有点紧，呃，我们下周三之前能不能先出一个初版"
+    @State private var input: String
     @State private var output = ""
     @State private var status: String?
     @State private var failed = false
     @State private var running: Task<Void, Never>?
     @State private var started = Date()
 
+    init(job: Job) {
+        self.job = job
+        _input = State(initialValue: job == .polish
+            ? "嗯，那个，我觉得这个方案呢其实还可以，就是那个时间上可能有点紧，呃，我们下周三之前能不能先出一个初版"
+            : "我觉得这个方案其实还可以，就是时间上可能有点紧。我们下周三之前能不能先出一个初版？")
+    }
+
+    private var verb: String { job == .polish ? "Polish" : "Translate" }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            FieldLabel("As spoken")
+            FieldLabel(job == .polish ? "As spoken" : "Text")
             TextEditor(text: $input)
                 .font(.system(size: 12.5))
                 .scrollContentBackground(.hidden)
@@ -189,7 +201,8 @@ private struct TryIt: View {
                 Button {
                     running == nil ? run() : stop()
                 } label: {
-                    Label(running == nil ? "Polish" : "Stop", systemImage: running == nil ? "sparkles" : "stop.fill")
+                    Label(running == nil ? verb : "Stop",
+                          systemImage: running == nil ? (job == .polish ? "sparkles" : "translate") : "stop.fill")
                         .frame(minWidth: 80)
                         .contentTransition(.symbolEffect(.replace))
                 }
@@ -204,14 +217,15 @@ private struct TryIt: View {
                         .lineLimit(2)
                         .transition(.opacity)
                 } else if !settings.polishReady {
-                    Text("Fill in the model API first.").font(.system(size: 12)).foregroundStyle(.secondary)
+                    Text(job == .polish ? "Fill in the model API first." : "Set up the model API in Polish first.")
+                        .font(.system(size: 12)).foregroundStyle(.secondary)
                 }
             }
             .animation(Motion.gentle, value: status)
 
             if !output.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    FieldLabel("Polished")
+                    FieldLabel(job == .polish ? "Polished" : "Translated")
                     Text(output)
                         .font(.system(size: 13))
                         .textSelection(.enabled)
@@ -235,13 +249,17 @@ private struct TryIt: View {
         let client = settings.openRouterClient()
         let info = settings.modelInfo
         let text = input
-        let instructions = settings.prompt
+        let job = self.job
+        let instructions = job == .polish ? settings.prompt : settings.translatePrompt
+        let language = settings.translateLanguage
         running = Task {
             do {
-                let out = try await client.polish(model: model, info: info,
-                                                  instructions: instructions, input: text, source: .dictation) { p in
-                    Task { @MainActor in show(p) }
-                }
+                let report: @Sendable (PolishProgress) -> Void = { p in Task { @MainActor in show(p) } }
+                let out = job == .polish
+                    ? try await client.polish(model: model, info: info, instructions: instructions, input: text,
+                                              source: .dictation, progress: report)
+                    : try await client.translate(model: model, info: info, instructions: instructions, input: text,
+                                                 language: language, progress: report)
                 output = out.text
                 let s = Date().timeIntervalSince(started)
                 status = String(format: "Done in %.1f s", s) + (out.attempts > 1 ? " · \(out.attempts) attempts" : "")

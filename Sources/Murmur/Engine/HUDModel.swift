@@ -9,11 +9,18 @@ final class HUDModel {
         case listening
         /// Waiting for Doubao's complete text; `retry` counts replays.
         case transcribing(retry: Int)
-        /// The model is at work on a dictation or a selection.
-        case polishing(source: PolishPrompt.Source, retry: Int, thinking: Bool)
+        /// The model is at work: polishing a dictation, refining a
+        /// selection, or translating either.
+        case model(Job, retry: Int, thinking: Bool)
         case done(String)
         case notice(Notice)
         case cancelled
+    }
+
+    enum Job: Equatable {
+        case polish, refine
+        /// Into the named language.
+        case translate(String)
     }
 
     struct Notice: Equatable {
@@ -32,6 +39,8 @@ final class HUDModel {
     /// The text the model is working on, shown dimmed until its answer starts.
     var preview = ""
     var startedAt = Date()
+    /// The language a translating session will end in; nil when it won't translate.
+    var target: String?
     /// Bumped to shake the capsule ("busy", errors).
     var shakes = 0
 
@@ -45,27 +54,30 @@ final class HUDModel {
         dismissal?.cancel()
         liveText = ""
         preview = ""
+        target = nil
         level = 0
         startedAt = Date()
     }
 
-    func startListening() {
+    func startListening(translatingTo target: String? = nil) {
         reset()
+        self.target = target
         mode = .listening
     }
 
     func show(_ mode: Mode) {
         dismissal?.cancel()
-        if case .polishing = mode, !isPolishing { waitingSince = Date() }
+        if case .model(let job, _, _) = mode, job != currentJob { waitingSince = Date() }
         self.mode = mode
     }
 
-    /// When the model was first asked, for the wait shown on long answers.
+    /// When the model was first asked for the current job, for the wait
+    /// shown on long answers.
     var waitingSince = Date()
 
-    private var isPolishing: Bool {
-        if case .polishing = mode { return true }
-        return false
+    private var currentJob: Job? {
+        if case .model(let job, _, _) = mode { return job }
+        return nil
     }
 
     func push(_ levels: [Float]) {
@@ -100,18 +112,18 @@ final class HUDModel {
     func nudge() { shakes += 1 }
 
     func apply(_ progress: PolishProgress) {
-        guard case .polishing(let source, let retry, let thinking) = mode else { return }
+        guard case .model(let job, let retry, let thinking) = mode else { return }
         switch progress {
         case .attempt:
             break
         case .thinking:
-            if !thinking { mode = .polishing(source: source, retry: retry, thinking: true) }
+            if !thinking { mode = .model(job, retry: retry, thinking: true) }
         case .text(let t):
             liveText = t
-            if thinking { mode = .polishing(source: source, retry: retry, thinking: false) }
+            if thinking { mode = .model(job, retry: retry, thinking: false) }
         case .retrying(let next, _):
             liveText = ""
-            mode = .polishing(source: source, retry: next, thinking: false)
+            mode = .model(job, retry: next, thinking: false)
         }
     }
 }

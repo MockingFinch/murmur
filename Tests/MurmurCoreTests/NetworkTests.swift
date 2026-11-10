@@ -99,6 +99,19 @@ final class OpenRouterNetworkTests: XCTestCase {
         XCTAssertFalse(request.lowercased().contains("authorization:"), "no key, no Authorization header")
     }
 
+    func testTranslationGoesThroughTheSameStream() async throws {
+        let server = try FakeHTTPServer { _, _ in
+            [.write(FakeHTTPServer.head(200, "OK")), .write(FakeHTTPServer.chunk("Hello.", finish: "stop")), .write("data: [DONE]\n\n")]
+        }
+        let out = try await client(server).translate(model: "m", info: nil, instructions: TranslatePrompt.defaultInstructions,
+                                                     input: "你好。", language: "English") { _ in }
+        XCTAssertEqual(out.text, "Hello.")
+        let request = server.allRequests[0]
+        XCTAssertTrue(request.contains("Translate the text into English."))
+        XCTAssertTrue(request.contains("<text>"))
+        XCTAssertFalse(request.contains("{language}"))
+    }
+
     func testEndpointParsing() {
         XCTAssertEqual(OpenRouterClient.endpoint(from: " https://openrouter.ai/api/v1/ ")?.absoluteString, "https://openrouter.ai/api/v1")
         XCTAssertEqual(OpenRouterClient.endpoint(from: "https://api.example.com/v1/chat/completions")?.absoluteString, "https://api.example.com/v1")

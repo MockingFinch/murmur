@@ -32,6 +32,7 @@ enum Brand {
     static let voice = LinearGradient(colors: [Color(hex: 0xFF7A59), Color(hex: 0xFF3B7A)], startPoint: .topLeading, endPoint: .bottomTrailing)
     static let polish = LinearGradient(colors: [Color(hex: 0x9C7BFF), Color(hex: 0x4D8DFF)], startPoint: .topLeading, endPoint: .bottomTrailing)
     static let overview = LinearGradient(colors: [Color(hex: 0x5AC8FA), Color(hex: 0x4D6BFF)], startPoint: .topLeading, endPoint: .bottomTrailing)
+    static let translate = LinearGradient(colors: [Color(hex: 0x3DD6C0), Color(hex: 0x2F7BF5)], startPoint: .topLeading, endPoint: .bottomTrailing)
     static let graphite = LinearGradient(colors: [Color(hex: 0x8E8E93), Color(hex: 0x48484A)], startPoint: .topLeading, endPoint: .bottomTrailing)
     static let ink = LinearGradient(colors: [Color(hex: 0x2A2D4A), Color(hex: 0x14152A)], startPoint: .top, endPoint: .bottom)
 }

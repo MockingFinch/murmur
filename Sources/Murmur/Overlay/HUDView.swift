@@ -33,7 +33,7 @@ private struct HUDCapsule: View {
         switch mode {
         case .listening, .transcribing:
             return model.liveText.isEmpty ? nil : (model.liveText, false)
-        case .polishing:
+        case .model:
             if !model.liveText.isEmpty { return (model.liveText, false) }
             return model.preview.isEmpty ? nil : (model.preview, true)
         default:
@@ -46,9 +46,9 @@ private struct HUDCapsule: View {
 
     private var width: CGFloat {
         switch mode {
-        case .listening: return line == nil ? 214 : Self.textWidth
+        case .listening: return line == nil ? (model.target == nil ? 214 : 300) : Self.textWidth
         case .transcribing: return line == nil ? 214 : Self.textWidth
-        case .polishing: return Self.textWidth
+        case .model: return Self.textWidth
         case .done(let title): return CGFloat(min(320, 92 + title.count * 8))
         case .notice(let n): return n.detail == nil ? CGFloat(min(380, 100 + n.title.count * 8)) : 420
         case .cancelled: return 150
@@ -64,7 +64,7 @@ private struct HUDCapsule: View {
         switch mode {
         case .listening: return "listening"
         case .transcribing: return "transcribing"
-        case .polishing: return "polishing"
+        case .model: return "model"
         case .done: return "done"
         case .notice: return "notice"
         case .cancelled: return "cancelled"
@@ -138,7 +138,7 @@ private struct HUDCapsule: View {
                         .offset(x: 40, y: 32)
                 }
             }
-        case .polishing, .transcribing:
+        case .model, .transcribing:
             TimelineView(.animation) { ctx in
                 let t = ctx.date.timeIntervalSinceReferenceDate
                 ZStack {
@@ -166,11 +166,12 @@ private struct HUDCapsule: View {
                 RecordingDot(model: model).transition(.scale.combined(with: .opacity))
             case .transcribing:
                 ArcSpinner().transition(.scale.combined(with: .opacity))
-            case .polishing:
-                Image(systemName: "sparkles")
+            case .model(let job, _, _):
+                Image(systemName: job == .polish || job == .refine ? "sparkles" : "translate")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Brand.polish)
                     .symbolEffect(.pulse, options: .repeating)
+                    .contentTransition(.symbolEffect(.replace))
                     .transition(.scale.combined(with: .opacity))
             case .done:
                 Image(systemName: "checkmark.circle.fill")
@@ -205,9 +206,9 @@ private struct HUDCapsule: View {
                 Waveform(model: model, settling: true).frame(width: 46, height: 18)
             }
             .transition(.blurReplace)
-        case .polishing(let source, let retry, let thinking):
-            Shimmering(text: polishLabel(source, retry, thinking))
-                .id(polishLabel(source, retry, thinking))
+        case .model(let job, let retry, let thinking):
+            Shimmering(text: modelLabel(job, retry, thinking))
+                .id(modelLabel(job, retry, thinking))
                 .transition(.blurReplace)
         case .done(let title):
             Text(title)
@@ -238,18 +239,27 @@ private struct HUDCapsule: View {
 
     @ViewBuilder private var trailing: some View {
         if case .listening = mode {
-            ElapsedLabel(since: model.startedAt)
-                .transition(.opacity)
-        } else if case .polishing = mode {
+            HStack(spacing: 8) {
+                if let target = model.target { TargetBadge(language: target) }
+                ElapsedLabel(since: model.startedAt)
+            }
+            // The waveform gives way; the time and the language never do.
+            .fixedSize()
+            .transition(.opacity)
+        } else if case .model = mode {
             WaitLabel(since: model.waitingSince)
                 .transition(.opacity)
         }
     }
 
-    private func polishLabel(_ source: PolishPrompt.Source, _ retry: Int, _ thinking: Bool) -> String {
+    private func modelLabel(_ job: HUDModel.Job, _ retry: Int, _ thinking: Bool) -> String {
         if retry > 0 { return "Retrying · \(retry) of 3" }
         if thinking { return "Thinking" }
-        return source == .selection ? "Refining selection" : "Polishing"
+        switch job {
+        case .polish: return "Polishing"
+        case .refine: return "Refining selection"
+        case .translate(let language): return "Translating to \(language)"
+        }
     }
 
     private func noticeSymbol(_ tone: HUDModel.Notice.Tone) -> String {
@@ -271,11 +281,10 @@ private struct HUDCapsule: View {
 
 // MARK: - Pieces
 
-/// Text that keeps its newest words in view: it starts at the left, and
-/// once it outgrows the line, slides left with its start fading out.
-/// The words so far, as a short teleprompter: up to three lines, the
-/// newest at the bottom. Longer text slides up and fades out at the top,
-/// so the capsule never grows past three lines however long you speak.
+/// The words so far, as a short teleprompter. It is exactly as tall as the
+/// text, from one line up to three, so the capsule grows a line at a time.
+/// Past three lines the newest stay at the bottom and older ones slide up
+/// and fade out at the top: the capsule never grows further.
 private struct Transcript: View {
     let text: String
     let dim: Bool
@@ -303,7 +312,11 @@ private struct Transcript: View {
             .fixedSize(horizontal: false, vertical: true)
             .frame(maxWidth: .infinity, alignment: .leading)
             .onGeometryChange(for: Bool.self) { $0.size.height > maxHeight + 1 } action: { overflowing = $0 }
+            // Asked for its ideal height, the frame answers with the text's
+            // own height, capped at three lines; offered more room, it takes
+            // none of it. Overflow stays pinned to the bottom and is clipped.
             .frame(maxHeight: maxHeight, alignment: .bottom)
+            .fixedSize(horizontal: false, vertical: true)
             .clipped()
             .mask {
                 LinearGradient(stops: [
@@ -322,6 +335,29 @@ private struct Transcript: View {
         var tail = flat.suffix(Self.keep)
         if let space = tail.prefix(24).firstIndex(of: " ") { tail = tail[tail.index(after: space)...] }
         return String(tail)
+    }
+}
+
+/// Says, while you speak, which language the text will go in as.
+private struct TargetBadge: View {
+    let language: String
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: "translate").font(.system(size: 10, weight: .semibold))
+            Text(TranslationLanguages.native(language))
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 92, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .foregroundStyle(.white.opacity(0.82))
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Color.white.opacity(0.1)))
+        .overlay(Capsule().strokeBorder(Color.white.opacity(0.12), lineWidth: 0.5))
+        .accessibilityLabel("Translating to \(language)")
     }
 }
 

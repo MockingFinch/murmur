@@ -43,16 +43,22 @@ struct OverviewPage: View {
                         Figure(title: "Characters", value: Format.count(all.characters))
                         Figure(title: "Time saved", value: Format.minutes(all.minutesSaved))
                         Figure(title: "Spoken", value: Format.minutes(all.audioSeconds / 60))
-                        Figure(title: "Day streak", value: summary.streak == 0 ? "—" : "\(summary.streak)")
                     }
                     Divider().gridCellUnsizedAxes(.horizontal).padding(.horizontal, 14).opacity(0.6)
                     GridRow {
                         Figure(title: "Dictations", value: Format.count(all.dictations))
-                        Figure(title: "Refines", value: Format.count(all.refines))
+                        Figure(title: "Selections", value: Format.count(all.refines),
+                               help: "Selected text you refined or translated.")
+                        Figure(title: "Translations", value: Format.count(all.translations),
+                               help: "Dictations and selections that went in translated.")
+                    }
+                    Divider().gridCellUnsizedAxes(.horizontal).padding(.horizontal, 14).opacity(0.6)
+                    GridRow {
                         Figure(title: "Polished", value: summary.polishRate.map { Format.percent($0) } ?? "—",
                                help: "Of the times the model was asked, how often its text went in.")
                         Figure(title: "Wait after stop", value: summary.medianWait.map { Format.seconds($0) } ?? "—",
                                help: "Median time from your second press to the text appearing (last 50 uses).")
+                        Figure(title: "Day streak", value: summary.streak == 0 ? "—" : "\(summary.streak)")
                     }
                 }
             }
@@ -89,8 +95,8 @@ struct OverviewPage: View {
         ChecklistRow(done: readiness.micReady, title: "Allow the microphone",
                      detail: "Asked the first time you dictate, or set it now.") { navigator.page = .shortcut }
         RowDivider().padding(.vertical, -6)
-        ChecklistRow(done: readiness.accessibility, title: "Allow Accessibility",
-                     detail: "To read your selection and type the text where your cursor is.") { navigator.page = .shortcut }
+        ChecklistRow(done: readiness.accessibility, title: "Allow \(Permissions.accessibilityName)",
+                     detail: "To read your selection and paste the text where your cursor is.") { navigator.page = .shortcut }
         RowDivider().padding(.vertical, -6)
         ChecklistRow(done: settings.polishReady, optional: true, title: "Connect a language model",
                      detail: "Without it, the transcript goes in as Doubao heard it.") { navigator.page = .polish }

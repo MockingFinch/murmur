@@ -7,13 +7,14 @@ struct ShortcutPage: View {
     @Bindable private var settings = AppSettings.shared
     private let readiness = Readiness.shared
     @State private var loginItem = Permissions.launchAtLogin
+    @State private var askedForAccessibility = false
 
     var body: some View {
         PageHeader(symbol: "command", gradient: Brand.graphite, title: "Shortcut",
-                   subtitle: "One key for everything. Press to start, press again to insert; with text selected, it refines the selection.")
+                   subtitle: "Press to start, press again to insert; with text selected, it refines the selection. Translation has its own shortcut, on the Translate page.")
 
         PageSection(title: "Shortcut") {
-            Card { ShortcutRecorder() }
+            Card { ShortcutRecorder(hotkey: .dictate) }
         }
 
         PageSection(title: "Permissions") {
@@ -29,12 +30,24 @@ struct ShortcutPage: View {
                     }
                 }
                 RowDivider()
-                PermissionRow(symbol: "accessibility", title: "Accessibility",
-                              detail: "To read the text you selected and to type the result where your cursor is.",
+                PermissionRow(symbol: "accessibility", title: Permissions.accessibilityName,
+                              detail: "To read the text you selected and to paste the result where your cursor is.",
                               granted: readiness.accessibility, actionTitle: "Open Settings") {
                     Permissions.requestAccessibility()
                     Permissions.open(.accessibility)
+                    withAnimation(Motion.gentle) { askedForAccessibility = true }
                 }
+            }
+            // macOS keeps an app's switch tied to the exact build it was
+            // turned on for. After an update or rebuild the old entry still
+            // shows as on, yet doesn't apply, and nothing on screen says so.
+            if askedForAccessibility && !readiness.accessibility {
+                Text("Murmur already switched on there? That switch belongs to an earlier build of Murmur, so macOS doesn't apply it to this one. Select Murmur in the list, remove it with −, then click Open Settings here again and switch the new entry on.")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(Brand.amber)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .padding(.horizontal, 4)
+                    .transition(.opacity)
             }
         }
 
@@ -60,8 +73,9 @@ struct ShortcutPage: View {
 // MARK: - Recorder
 
 /// Click, press the new combination. Esc gives up; the old one stays.
-private struct ShortcutRecorder: View {
-    @Bindable private var settings = AppSettings.shared
+/// Records either of Murmur's shortcuts; they can't be the same.
+struct ShortcutRecorder: View {
+    let hotkey: AppHotkey
     @State private var recording = false
     @State private var held: NSEvent.ModifierFlags = []
     @State private var message: String?
@@ -84,7 +98,7 @@ private struct ShortcutRecorder: View {
                             }
                             .transition(.opacity)
                         } else {
-                            KeyCaps(caps: settings.shortcut.caps, size: 30)
+                            KeyCaps(caps: hotkey.shortcut.caps, size: 30)
                                 .transition(.opacity)
                         }
                     }
@@ -108,8 +122,8 @@ private struct ShortcutRecorder: View {
                     Text(recording ? "Press the new shortcut. Esc to keep the current one." : "Click to change.")
                         .font(.system(size: 12))
                         .foregroundStyle(.secondary)
-                    if settings.shortcut != .default, !recording {
-                        Button("Use \(Shortcut.default.display)") { apply(.default) }
+                    if hotkey.shortcut != hotkey.defaultShortcut, !recording {
+                        Button("Use \(hotkey.defaultShortcut.display)") { apply(hotkey.defaultShortcut) }
                             .buttonStyle(.link)
                             .font(.system(size: 12))
                     }
@@ -125,8 +139,13 @@ private struct ShortcutRecorder: View {
             }
 
             HStack(spacing: 18) {
-                Hint(caps: settings.shortcut.caps, text: "start · stop and insert")
-                Hint(symbol: "text.cursor", text: "select text first to refine it")
+                if hotkey == .dictate {
+                    Hint(caps: hotkey.shortcut.caps, text: "start · stop and insert")
+                    Hint(symbol: "text.cursor", text: "select text first to refine it")
+                } else {
+                    Hint(caps: hotkey.shortcut.caps, text: "start · stop and translate")
+                    Hint(symbol: "text.cursor", text: "select text first to translate it")
+                }
             }
             .padding(.top, 2)
         }
@@ -142,8 +161,8 @@ private struct ShortcutRecorder: View {
         message = nil
         held = []
         recording = true
-        // While recording, the current shortcut must reach us, not trigger.
-        ToggleHotkey.suspend()
+        // While recording, both shortcuts must reach us, not trigger.
+        AppHotkey.allCases.forEach { $0.suspend() }
         monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
             if event.type == .flagsChanged {
                 held = event.modifierFlags.intersection([.command, .option, .control, .shift])
@@ -169,7 +188,7 @@ private struct ShortcutRecorder: View {
         monitor = nil
         if recording {
             recording = false
-            ToggleHotkey.install(settings.shortcut)
+            Self.reinstall()
         }
     }
 
@@ -177,13 +196,23 @@ private struct ShortcutRecorder: View {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
         recording = false
-        if ToggleHotkey.install(candidate) {
-            settings.shortcut = candidate
+        defer { Self.reinstall() }
+        if candidate == hotkey.other.shortcut {
+            message = "\(candidate.display) is already your \(hotkey.other.role) shortcut. Try another."
+            return
+        }
+        if hotkey.install(candidate) {
+            hotkey.shortcut = candidate
             message = nil
         } else {
-            ToggleHotkey.install(settings.shortcut)
             message = "\(candidate.display) is taken by another app or by macOS. Try another."
         }
+    }
+
+    /// Both shortcuts as saved. A failed install leaves that one off until
+    /// a working combination is recorded.
+    private static func reinstall() {
+        for h in AppHotkey.allCases { h.install(h.shortcut) }
     }
 }
 

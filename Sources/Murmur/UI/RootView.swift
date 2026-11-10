@@ -50,6 +50,7 @@ extension Page {
         case .overview: return "Overview"
         case .speech: return "Speech"
         case .polish: return "Polish"
+        case .translate: return "Translate"
         case .shortcut: return "Shortcut"
         }
     }
@@ -60,6 +61,7 @@ extension Page {
         case .overview: return "chart.bar"
         case .speech: return "waveform"
         case .polish: return "sparkles"
+        case .translate: return "translate"
         case .shortcut: return "command"
         }
     }
@@ -92,6 +94,7 @@ private struct Detail: View {
                 case .overview: OverviewPage()
                 case .speech: SpeechPage()
                 case .polish: PolishPage()
+                case .translate: TranslatePage()
                 case .shortcut: ShortcutPage()
                 }
             }
@@ -151,7 +154,7 @@ private struct Sidebar: View {
 
     private func needsAttention(_ page: Page) -> Bool {
         switch page {
-        case .overview, .polish: return false
+        case .overview, .polish, .translate: return false
         case .speech: return !settings.speechReady
         case .shortcut: return !readiness.micReady || !readiness.accessibility
         }

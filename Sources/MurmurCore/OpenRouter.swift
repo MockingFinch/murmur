@@ -355,6 +355,21 @@ public final class OpenRouterClient: Sendable {
                        source: PolishPrompt.Source,
                        progress: @escaping @Sendable (PolishProgress) -> Void) async throws -> PolishOutput {
         let (system, user) = PolishPrompt.messages(instructions: instructions, input: input, source: source)
+        return try await answer(model: model, info: info, system: system, user: user, input: input, progress: progress)
+    }
+
+    /// Translates `input` into `language` with `instructions`, with the same
+    /// streaming, stall watch, deadline and retries as polishing.
+    public func translate(model: String, info: OpenRouterModel?, instructions: String, input: String,
+                          language: String,
+                          progress: @escaping @Sendable (PolishProgress) -> Void) async throws -> PolishOutput {
+        let (system, user) = TranslatePrompt.messages(instructions: instructions, input: input, language: language)
+        return try await answer(model: model, info: info, system: system, user: user, input: input, progress: progress)
+    }
+
+    /// One complete answer to `system` and `user` about `input`.
+    private func answer(model: String, info: OpenRouterModel?, system: String, user: String, input: String,
+                        progress: @escaping @Sendable (PolishProgress) -> Void) async throws -> PolishOutput {
         let chars = input.count
         var reasoning = extras ? ReasoningSetting.least(for: info) : .omit
         let deadline = Date().addingTimeInterval(tuning.timeout)

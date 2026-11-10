@@ -17,6 +17,14 @@ enum Snapshots {
                 m.startListening(); m.level = 0.45
                 m.liveText = "我觉得这个方案其实还可以，就是时间上可能有点紧"
             }),
+            ("listening-one-line", { m in
+                m.startListening(); m.level = 0.5
+                m.liveText = "Besides that, you can see."
+            }),
+            ("listening-two-lines", { m in
+                m.startListening(); m.level = 0.5
+                m.liveText = "Besides that, you can see that when the content only has one line, the capsule should hug it instead of leaving room."
+            }),
             ("listening-long", { m in
                 m.startListening(); m.level = 0.55
                 m.liveText = "下周的安排是这样的：周三之前先把初版发出来，周四请设计团队一起过一遍，收集大家的意见，周五集中把新手引导的流程打磨好，然后交给测试同学做一轮完整的回归。"
@@ -27,15 +35,26 @@ enum Snapshots {
             }),
             ("transcribing", { m in m.show(.transcribing(retry: 0)) }),
             ("reconnecting", { m in m.show(.transcribing(retry: 1)) }),
-            ("polishing", { m in m.preview = "嗯那个我觉得这个方案呢其实还可以"; m.show(.polishing(source: .dictation, retry: 0, thinking: false)) }),
+            ("polishing", { m in m.preview = "嗯那个我觉得这个方案呢其实还可以"; m.show(.model(.polish, retry: 0, thinking: false)) }),
             ("polishing-long", { m in
-                m.show(.polishing(source: .dictation, retry: 0, thinking: false))
+                m.show(.model(.polish, retry: 0, thinking: false))
                 m.liveText = "下周安排：周三前发出初版；周四请设计团队评审并收集意见；周五打磨新手引导流程，之后交给测试做完整回归。"
                 m.waitingSince = Date().addingTimeInterval(-9)
             }),
-            ("thinking", { m in m.show(.polishing(source: .dictation, retry: 0, thinking: true)) }),
-            ("retrying", { m in m.show(.polishing(source: .dictation, retry: 2, thinking: false)); m.waitingSince = Date().addingTimeInterval(-47) }),
-            ("refining", { m in m.show(.polishing(source: .selection, retry: 0, thinking: false)) }),
+            ("thinking", { m in m.show(.model(.polish, retry: 0, thinking: true)) }),
+            ("retrying", { m in m.show(.model(.polish, retry: 2, thinking: false)); m.waitingSince = Date().addingTimeInterval(-47) }),
+            ("listening-translate", { m in m.startListening(translatingTo: "Simplified Chinese"); m.level = 0.6 }),
+            ("translating", { m in
+                m.preview = "So the plan for next week is to ship the first draft on Wednesday."
+                m.show(.model(.translate("Japanese"), retry: 0, thinking: false))
+                m.liveText = "来週の予定としては、水曜日に"
+            }),
+            ("translating-selection", { m in
+                m.preview = "我觉得这个方案其实还可以，就是时间上可能有点紧。"
+                m.show(.model(.translate("English"), retry: 0, thinking: false))
+            }),
+            ("done-translated", { m in m.show(.done("Translated, inserted and copied")) }),
+            ("refining", { m in m.show(.model(.refine, retry: 0, thinking: false)) }),
             ("done", { m in m.show(.done("Inserted and copied")) }),
             ("notice-warning", { m in m.show(.notice(.init(tone: .warning, title: "Inserted without polishing", detail: "No complete answer within 180 seconds."))) }),
             ("notice-error", { m in m.show(.notice(.init(tone: .error, title: "Couldn't transcribe", detail: "Doubao didn't accept the key."))) }),

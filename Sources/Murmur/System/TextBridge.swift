@@ -154,7 +154,7 @@ enum TextBridge {
     static func paste(_ text: String) async -> PasteOutcome {
         Clipboard.put(text)
         guard AXIsProcessTrusted() else {
-            return .copied("Allow Accessibility so Murmur can type for you. Paste with ⌘V.")
+            return .copied("Murmur isn't allowed to paste yet; see its Shortcut page. Paste with ⌘V for now.")
         }
         if IsSecureEventInputEnabled() {
             return .copied("Secure input is on, so Murmur can't type here. Paste with ⌘V.")

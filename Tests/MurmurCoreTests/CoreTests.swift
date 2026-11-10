@@ -115,6 +115,21 @@ final class PromptTests: XCTestCase {
         XCTAssertEqual(s.user, "<text>\ntext\n</text>")
     }
 
+    func testTranslationNamesTheLanguage() {
+        let m = TranslatePrompt.messages(instructions: TranslatePrompt.defaultInstructions, input: "你好", language: " Japanese ")
+        XCTAssertTrue(m.system.hasPrefix("You are a professional translator. Translate the text into Japanese."))
+        XCTAssertFalse(m.system.contains(TranslatePrompt.placeholder))
+        XCTAssertTrue(m.system.contains("text to translate into Japanese"))
+        XCTAssertEqual(m.user, "<text>\n你好\n</text>")
+        // Instructions without the placeholder still get the language from the frame;
+        // a blank language falls back to English.
+        let plain = TranslatePrompt.messages(instructions: "Be brief.", input: "x", language: "  ")
+        XCTAssertTrue(plain.system.hasPrefix("Be brief."))
+        XCTAssertTrue(plain.system.contains("Reply with the English translation only"))
+        let bare = TranslatePrompt.messages(instructions: "", input: "x", language: "French")
+        XCTAssertTrue(bare.system.hasPrefix("The user message holds text to translate into French"))
+    }
+
     func testDefaultPromptIsTheUsers() {
         XCTAssertTrue(PolishPrompt.defaultInstructions.hasPrefix("You are a transcription enhancement assistant."))
         XCTAssertTrue(PolishPrompt.defaultInstructions.hasSuffix("surrounding quotation marks."))

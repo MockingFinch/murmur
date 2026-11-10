@@ -13,6 +13,13 @@ enum Permissions {
 
     static var accessibility: Bool { AXIsProcessTrusted() }
 
+    /// What System Settings calls the Accessibility permission. macOS 27
+    /// lists it under Privacy & Security as "Device Control and Data Access".
+    nonisolated static var accessibilityName: String {
+        ProcessInfo.processInfo.operatingSystemVersion.majorVersion >= 27
+            ? "Device Control and Data Access" : "Accessibility"
+    }
+
     /// Shows the system prompt that adds Murmur to the Accessibility list.
     static func requestAccessibility() {
         let key = kAXTrustedCheckOptionPrompt.takeUnretainedValue() as String

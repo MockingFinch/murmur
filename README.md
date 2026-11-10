@@ -4,6 +4,8 @@ Dictation for macOS, and nothing else. Press **⌃X**, speak, press **⌃X** aga
 
 With text selected, the same shortcut skips the microphone and rewrites the selection with your prompt instead.
 
+**⌃⌘X** does the same and then translates the result into your chosen language: speak Chinese, insert English (or any other pair). With text selected, it translates the selection.
+
 <p align="center"><img src="docs/capsule.png" width="560" alt="Murmur's capsule while listening, polishing and done"></p>
 
 ## Install
@@ -19,7 +21,10 @@ With text selected, the same shortcut skips the microphone and rewrites the sele
 
 - **Speech:** paste your Doubao key from the [Volcengine console](https://console.volcengine.com/speech/app). Use *API Key* for the new console or *App ID + Token* for the classic one. Pick the model you opened (Doubao ASR 2.0 by default), then click **Test Connection**.
 - **Polish** (optional): enter a model API's endpoint, its key and the model's name. Any OpenAI-compatible API works: OpenRouter (the default), OpenAI, DeepSeek, or a model running on this Mac (no key needed). Click **Test**, then adjust the prompt if you like. **Try it** runs a real request on a sample.
-- **Shortcut:** allow the Microphone and Accessibility. Accessibility lets Murmur read a selection and paste the result. You can change ⌃X to another shortcut here.
+- **Translate** (optional): pick the language to translate into, and adjust the translation prompt if you like. It uses the model from Polish, so there is nothing else to set up. Its shortcut, ⌃⌘X by default, is changed here too.
+- **Shortcut:** allow the Microphone and Accessibility. Accessibility lets Murmur read a selection and paste the result; on macOS 27, System Settings lists it under Privacy & Security as **Device Control and Data Access**. You can change ⌃X to another shortcut here.
+
+**Pasting stopped after an update, though Murmur is switched on?** macOS ties that switch to the app's signature. Releases from 1.1.0 on are all signed with the same certificate, so updates between them keep it. Coming from 1.0.0, or from a build of your own, macOS sees a different app: the old entry keeps showing as on but no longer applies. In Privacy & Security → Accessibility (Device Control and Data Access on macOS 27), select Murmur and remove it with **−**. Then, on Murmur's Shortcut page, click **Open Settings** and switch the new entry on.
 
 <p align="center"><img src="docs/settings.png" width="720" alt="Murmur's settings window"></p>
 
@@ -32,6 +37,8 @@ With text selected, the same shortcut skips the microphone and rewrites the sele
   - otherwise nowhere: the text stays on the clipboard, and the capsule says so.
 - Esc is never captured: it keeps working in the app you're using, and only ⌃X ends a dictation. To cancel, use the menu bar icon.
 - **Select text, then ⌃X:** the selection is rewritten with your prompt and replaced. If the selection changed in the meantime, the result goes to the clipboard instead.
+- **⌃⌘X** works the same way, with one more step: after polishing, the text is translated, and the translation goes in. While you speak, the capsule shows the language it will go in as. With text selected, ⌃⌘X translates the selection and replaces it.
+- The shortcut that starts a session decides whether it translates; either shortcut ends it. If polishing fails, the transcript goes in as heard rather than waiting on a second request. If translating fails, the polished text goes in.
 
 ## Reliability
 
@@ -51,6 +58,7 @@ With text selected, the same shortcut skips the microphone and rewrites the sele
 | API keys | `~/Library/Application Support/Murmur/credentials.json`, readable only by your account |
 | Settings | `UserDefaults` (`local.murmur.dictation`) |
 | Statistics | `~/Library/Application Support/Murmur/usage.json`: counts and timings only, never text |
+| Translation language and prompt | `UserDefaults`, with the other settings |
 
 Audio goes only to Doubao. Text goes only to the model API you set up. Updates and rebuilds keep all of the above.
 
@@ -60,7 +68,7 @@ Audio goes only to Doubao. Text goes only to the model API you set up. Updates a
 scripts/build.sh --open     # Swift 6 toolchain, macOS 26 SDK
 ```
 
-macOS remembers Accessibility and Microphone permissions by an app's signature. Builds are ad-hoc signed by default, so each one looks like a new app and needs Accessibility allowed again. To avoid that, create a local signing certificate once:
+macOS remembers Accessibility and Microphone permissions by an app's signature. Builds are ad-hoc signed by default, so each one looks like a new app: its Accessibility entry has to be removed and allowed again, as described above. To avoid that, create a local signing certificate once:
 
 ```bash
 scripts/setup-signing.sh

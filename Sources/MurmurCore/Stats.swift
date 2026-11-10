@@ -25,9 +25,12 @@ public struct UsageRecord: Codable, Identifiable, Hashable, Sendable {
     /// a selection) to the text going in.
     public var waitSeconds: Double
     public var attempts: Int
+    /// Whether what went in was translated. Absent in records made before
+    /// translation existed.
+    public var translated: Bool?
 
     public init(date: Date = Date(), kind: Kind, audioSeconds: Double, text: String, polish: Polish,
-                waitSeconds: Double, attempts: Int) {
+                waitSeconds: Double, attempts: Int, translated: Bool = false) {
         self.date = date
         self.kind = kind
         self.audioSeconds = audioSeconds
@@ -36,6 +39,7 @@ public struct UsageRecord: Codable, Identifiable, Hashable, Sendable {
         self.polish = polish
         self.waitSeconds = waitSeconds
         self.attempts = attempts
+        self.translated = translated ? true : nil
     }
 
     /// Minutes the same text would take to type: about 50 CJK characters
@@ -55,6 +59,8 @@ public struct UsageSummary: Equatable, Sendable {
     public struct Totals: Equatable, Sendable {
         public var dictations = 0
         public var refines = 0
+        /// Dictations and selections that went in translated.
+        public var translations = 0
         public var characters = 0
         public var audioSeconds = 0.0
         public var minutesSaved = 0.0
@@ -90,6 +96,7 @@ public enum UsageMath {
 
         func add(_ r: UsageRecord, to t: inout UsageSummary.Totals) {
             if r.kind == .dictation { t.dictations += 1 } else { t.refines += 1 }
+            if r.translated == true { t.translations += 1 }
             t.characters += r.characters
             t.audioSeconds += r.audioSeconds
             t.minutesSaved += r.minutesSaved

@@ -16,8 +16,10 @@ public struct Shortcut: Codable, Equatable, Hashable, Sendable {
     public static let option: UInt32 = 1 << 11
     public static let control: UInt32 = 1 << 12
 
-    /// ⌃X.
+    /// ⌃X: dictate and polish.
     public static let `default` = Shortcut(keyCode: 0x07, modifiers: control)
+    /// ⌃⌘X: dictate, polish and translate.
+    public static let translateDefault = Shortcut(keyCode: 0x07, modifiers: control | command)
 
     public var hasModifier: Bool { modifiers & (Self.command | Self.option | Self.control) != 0 }
 
