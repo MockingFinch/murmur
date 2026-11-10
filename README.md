@@ -7,7 +7,7 @@
 <p align="center">
   <b>Say it the way you think. Murmur writes it the way you'd type it.</b><br>
   Dictation for the Mac that turns what you say into clean, finished text, right where you're typing.<br>
-  Made for people who work in Chinese and English.
+  Polished in the language you spoke, or translated into any other.
 </p>
 
 <p align="center">
@@ -50,13 +50,13 @@ No window to open, no app to switch to, nothing to copy and paste. It works in M
 - **Fillers, false starts and repeats disappear.** When you correct yourself, only what you meant stays.
 - **Punctuation, capitals, numbers, times and lists** come out the way you'd type them.
 - **Names, product names, code, file paths and URLs are left alone,** so it's safe for technical writing and for prompting AI tools.
-- **Chinese stays Chinese, English stays English,** and a sentence that mixes the two keeps its mix, with the spacing right.
+- **Your language stays yours.** Murmur polishes in the language you spoke, and a sentence that mixes Chinese and English keeps its mix, with the spacing right.
 - **It's your prompt.** Tell Murmur how you write: your tone, your terms, your formatting habits. Try a change on a sample before you keep it.
 - **It's your model.** Use any model you like, from a fast, cheap one to the best one available, or one running on your own Mac.
 
 <br>
 
-## Speak Chinese. Send English.
+## Speak one language. Send another.
 
 <p align="center">
   <img src="docs/media/translate.webp" width="100%" alt="In a chat with a colleague, the user presses Control-Command-X and speaks Chinese. The capsule shows the words in Chinese with an English badge. On stopping, a natural English reply is typed into the chat box.">
@@ -68,10 +68,10 @@ No window to open, no app to switch to, nothing to copy and paste. It works in M
 
 Press <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> instead, and say it in the language you think in. What goes in is in the language you're writing to.
 
-- **It reads like you wrote it in English,** not like a transcript run through a dictionary. Murmur cleans up what you said first, then translates the clean version.
+- **It reads like a native speaker wrote it,** not like a transcript run through a dictionary. Murmur cleans up what you said first, then translates the clean version.
 - **English is only the default.** Pick any language your model writes: Japanese, French, German, Korean and more.
 - **The capsule shows where your words are going** while you speak, so you always know which shortcut you pressed.
-- **Already typed it in Chinese?** Select the text and press <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> to translate it in place.
+- **Already typed it?** Select text in any language and press <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> to translate it in place.
 
 <br>
 
@@ -130,7 +130,7 @@ While you work, Murmur is a small capsule at the bottom of the screen. It shows 
 - **No account, no subscription, no Murmur server in between.** You bring your own speech key and model key and pay those providers directly, only for what you use.
 - **Your voice goes only to the speech service. Your text goes only to the model you chose.** Point Murmur at a model running on your Mac, and your text never leaves it.
 - **Keys stay on your Mac,** readable only by your account. Each recording is deleted as soon as its words are in.
-- **Speech recognition is Doubao's,** from Volcengine: strong on Chinese, on English, and on the mix of the two that many of us actually speak.
+- **Speech recognition is Doubao's,** from Volcengine, which is especially good with Mandarin, English and sentences that mix the two.
 
 <br>
 
@@ -200,10 +200,12 @@ Murmur is free. You pay Doubao for speech recognition and your model provider fo
 </details>
 
 <details>
-<summary><b>Which languages does it understand?</b></summary>
+<summary><b>Which languages does it work in?</b></summary>
 <br>
 
-Murmur is tuned for Chinese and English speakers: Doubao recognizes both, including sentences that switch between them. Translation can go into any language your model writes well.
+- **Writing:** any language your model writes well. Polishing keeps the language you used, and translation can take your words into French, German, Japanese, Spanish and many more. Selected text can be rewritten or translated whatever its language.
+- **Speaking:** Murmur recognizes Mandarin and English, including sentences that switch between them, and several Chinese dialects, Cantonese among them. These are the languages Doubao transcribes live as you speak.
+- **The app itself** is in English for now.
 </details>
 
 <details>

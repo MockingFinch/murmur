@@ -35,6 +35,8 @@ Murmur is a menu bar app for the Mac that does one thing: it turns speech into f
 
 Press the shortcut and speak. Your words appear live in a small capsule at the bottom of the screen as Doubao recognizes them. Press the shortcut again, and Murmur waits for Doubao's final, more accurate pass, sends the transcript to a language model with your prompt to polish it, and inserts the result at your cursor, leaving a copy on the clipboard. A second shortcut does the same and then translates the polished text into the language you chose. With text selected, either shortcut works on the selection instead of the microphone.
 
+Murmur grew out of work in Chinese and English, and its examples show that, but it isn't limited to them. What goes in can be in any language the model writes well, and selected text can be rewritten or translated whatever its language. Speech is where the limits are today: Doubao transcribes Mandarin, English and several Chinese dialects live. The app's own interface is in English.
+
 ## The choices behind it
 
 **Doubao for recognition.** Chinese recognition quality, and the handling of mixed Chinese and English, were the first requirement and the hardest to meet. Doubao's streaming recognition, from Volcengine, met it. Streaming also means you see your words while you speak, which is what makes dictation feel responsive and lets you trust it's listening. Its second pass over each sentence improves accuracy before anything is inserted.
