@@ -1,100 +1,248 @@
-# Murmur
+<p align="center">
+  <img src="docs/media/icon.png" width="128" height="128" alt="Murmur's app icon">
+</p>
 
-Dictation for macOS, and nothing else. Press **⌃X**, speak, press **⌃X** again: Doubao transcribes, a language model polishes the text with your prompt, and the result is pasted where you're typing. It's also left on your clipboard.
+<h1 align="center">Murmur</h1>
 
-With text selected, the same shortcut skips the microphone and rewrites the selection with your prompt instead.
+<p align="center">
+  <b>Say it the way you think. Murmur writes it the way you'd type it.</b><br>
+  Dictation for the Mac that turns what you say into clean, finished text, right where you're typing.<br>
+  Made for people who work in Chinese and English.
+</p>
 
-**⌃⌘X** does the same and then translates the result into your chosen language: speak Chinese, insert English (or any other pair). With text selected, it translates the selection.
+<p align="center">
+  <a href="https://github.com/MockingFinch/murmur/releases/latest"><img src="https://img.shields.io/badge/Download_for_Mac-E8475F?style=for-the-badge&logo=apple&logoColor=white" alt="Download for Mac"></a>
+</p>
 
-<p align="center"><img src="docs/capsule.png" width="560" alt="Murmur's capsule while listening, polishing and done"></p>
+<p align="center">
+  <a href="https://github.com/MockingFinch/murmur/releases/latest"><img src="https://img.shields.io/github/v/release/MockingFinch/murmur?style=flat-square&label=version&color=3a3a3c" alt="Latest version"></a>
+  <img src="https://img.shields.io/badge/macOS-26%2B-3a3a3c?style=flat-square" alt="macOS 26 or later">
+  <img src="https://img.shields.io/badge/Apple_silicon-3a3a3c?style=flat-square" alt="Apple silicon">
+</p>
 
-## Install
+<p align="center">
+  <img src="docs/media/dictate.webp" width="100%" alt="In Mail, the user presses Control-X and speaks a rambling sentence about next week's plan. The words appear live in a capsule at the bottom of the screen. On the second Control-X, a clean, punctuated version is typed into the email.">
+</p>
 
-1. Download `Murmur-<version>.dmg` from [Releases](https://github.com/MockingFinch/murmur/releases/latest) and drag **Murmur** to **Applications**. Requires macOS 26 on Apple silicon.
-2. Open it. Murmur isn't notarized by Apple, so the first launch is blocked. Click **Done**, then go to **System Settings → Privacy & Security** and click **Open Anyway**. Or, in Terminal:
-   ```bash
-   xattr -dr com.apple.quarantine /Applications/Murmur.app
-   ```
-3. Murmur lives in the menu bar. Its window opens until setup is done.
+<br>
 
-## Setup
+You speak several times faster than you type, but what comes out of your mouth isn't what you'd put in an email. There are *ums*, restarts, "no wait, Thursday", and sentences that wander. Murmur keeps the speed and loses the mess.
 
-- **Speech:** paste your Doubao key from the [Volcengine console](https://console.volcengine.com/speech/app). Use *API Key* for the new console or *App ID + Token* for the classic one. Murmur uses Doubao ASR 2.0: pick the billing you opened (by duration or by concurrency), then click **Test Connection**.
-- **Polish** (optional): enter a model API's endpoint, its key and the model's name. Any OpenAI-compatible API works: OpenRouter (the default), OpenAI, DeepSeek, or a model running on this Mac (no key needed). Click **Test**, then adjust the prompt if you like. **Try it** runs a real request on a sample.
-- **Translate** (optional): pick the language to translate into, and adjust the translation prompt if you like. It uses the model from Polish, so there is nothing else to set up. Its shortcut, ⌃⌘X by default, is changed here too.
-- **Shortcut:** allow the Microphone and Accessibility. Accessibility lets Murmur read a selection and paste the result; on macOS 27, System Settings lists it under Privacy & Security as **Device Control and Data Access**. You can change ⌃X to another shortcut here.
+<table>
+  <tr>
+    <td width="33%" valign="top"><b>1 · Press <kbd>⌃</kbd> <kbd>X</kbd> and talk</b><br>In any app. Your words appear live as you speak, in a small capsule at the bottom of the screen.</td>
+    <td width="33%" valign="top"><b>2 · Press <kbd>⌃</kbd> <kbd>X</kbd> again</b><br>Murmur tidies up what you said: fillers out, punctuation in, your meaning and tone kept.</td>
+    <td width="33%" valign="top"><b>3 · It's written</b><br>The finished text appears at your cursor, and it's on your clipboard too.</td>
+  </tr>
+</table>
 
-**Pasting stopped after an update, though Murmur is switched on?** macOS ties that switch to the app's signature. Releases from 1.1.0 on are all signed with the same certificate, so updates between them keep it. Coming from 1.0.0, or from a build of your own, macOS sees a different app: the old entry keeps showing as on but no longer applies. In Privacy & Security → Accessibility (Device Control and Data Access on macOS 27), select Murmur and remove it with **−**. Then, on Murmur's Shortcut page, click **Open Settings** and switch the new entry on.
+No window to open, no app to switch to, nothing to copy and paste. It works in Mail, Slack, WeChat, Notion, your browser, your code editor, and anywhere else you can type.
 
-<p align="center"><img src="docs/settings.png" width="720" alt="Murmur's settings window"></p>
+<br>
 
-## Using it
+## Talk like a person. Read like a writer.
 
-- **⌃X** starts listening. The words appear live in a capsule at the bottom of the screen.
-- **⌃X** again stops. Murmur waits for Doubao's final text, polishes it, and pastes it:
-  - into the field with the text cursor, if there is one;
-  - otherwise into the text field under the mouse pointer, which it clicks into first;
-  - otherwise nowhere: the text stays on the clipboard, and the capsule says so.
-- Esc is never captured: it keeps working in the app you're using, and only ⌃X ends a dictation. To cancel, use the menu bar icon.
-- **Select text, then ⌃X:** the selection is rewritten with your prompt and replaced. If the selection changed in the meantime, the result goes to the clipboard instead.
-- **⌃⌘X** works the same way, with one more step: after polishing, the text is translated, and the translation goes in. While you speak, the capsule shows the language it will go in as. With text selected, ⌃⌘X translates the selection and replaces it.
-- The shortcut that starts a session decides whether it translates; either shortcut ends it. If polishing fails, the transcript goes in as heard rather than waiting on a second request. If translating fails, the polished text goes in.
-- Dictations stop at 15 minutes; the timer turns amber in the last minute. What you said goes in as usual.
-- The menu bar menu keeps the last result and the last transcript as Doubao heard it, before polishing, in case the clipboard has moved on. If a recording couldn't be transcribed in full, it's listed there too, with **Transcribe Again**.
+| You say | Murmur types |
+|---|---|
+| "Um, so for next week, uh, I think we should ship the first draft by Wednesday, then have the design team review it on Thursday, and, you know, spend Friday polishing onboarding before it goes to QA." | Next week: ship the first draft by Wednesday, have the design team review it on Thursday, and spend Friday polishing onboarding before it goes to QA. |
+| "Let's meet on Tuesday, no, sorry, Wednesday at three." | Let's meet on Wednesday at 3:00. |
 
-## Reliability
+- **Fillers, false starts and repeats disappear.** When you correct yourself, only what you meant stays.
+- **Punctuation, capitals, numbers, times and lists** come out the way you'd type them.
+- **Names, product names, code, file paths and URLs are left alone,** so it's safe for technical writing and for prompting AI tools.
+- **Chinese stays Chinese, English stays English,** and a sentence that mixes the two keeps its mix, with the spacing right.
+- **It's your prompt.** Tell Murmur how you write: your tone, your terms, your formatting habits. Try a change on a sample before you keep it.
+- **It's your model.** Use any model you like, from a fast, cheap one to the best one available, or one running on your own Mac.
 
-- **Nothing you say is lost to the network.**
-  - If the stream to Doubao drops while you speak, the capsule shows **Reconnecting**. Keep talking. Murmur keeps every sentence Doubao has confirmed, opens a new connection and sends only the audio after them, faster than real time until it catches up. Nothing is transcribed or billed twice.
-  - While you're speaking, it never gives up. Once you stop, it gives up after 5 tries in a row that get nothing back. What Doubao confirmed then goes in, along with the words still in progress, and the capsule says how much at the end is missing.
-  - If Doubao refuses partway (a key or quota problem), the capsule shows **Recording only**: recording goes on, and what was confirmed until then goes in.
-- **Every recording is on disk until its words are in.** It's written a moment behind the microphone, so a crash, a quit or a network that never comes back costs nothing. If the text came back incomplete, or not at all, the recording stays: choose **Transcribe Again** in the menu bar to run it through Doubao, polishing and translation again and insert the result. A recording that was cut off by a crash or a quit is offered at the next launch. Cancelling while you speak discards the recording; cancelling after you stop keeps it.
-- **A lost microphone ends the dictation, not the words.** If the microphone disappears and no other takes over, what you said until then goes in.
-- **Polishing has a deadline, not a hair trigger.**
-  - One request carries the whole text. It gets up to 180 seconds, retries included (Polish → Timeout).
-  - Keep-alives count as progress; only 20 seconds of total silence counts as a stall.
-  - A failed request is sent again, up to 5 attempts in all, honoring `Retry-After`. Errors a new request can't fix (a wrong key, no credits, an unknown model) skip the wait.
-  - Translating works the same way, with its own 5 attempts.
-  - Your words are never dropped. If polishing still fails, the transcript goes in as Doubao heard it; if translating fails, the polished text goes in. Whatever goes in is also on the clipboard.
-  - An answer cut off at the model's length limit is never inserted, since it would drop the end of what you said. The full transcript goes in instead. When OpenRouter lists how much a model can write in one answer, Murmur never asks for more.
-- **Thinking is kept to a minimum.** On OpenRouter, Murmur asks each model for the least thinking it allows. Polishing gains nothing from it, and thinking by default can take a minute.
-- **The connection opens while you speak**, so the answer doesn't wait on DNS and TLS after you stop.
+<br>
 
-## Privacy and storage
+## Speak Chinese. Send English.
+
+<p align="center">
+  <img src="docs/media/translate.webp" width="100%" alt="In a chat with a colleague, the user presses Control-Command-X and speaks Chinese. The capsule shows the words in Chinese with an English badge. On stopping, a natural English reply is typed into the chat box.">
+</p>
+
+| 你说 · You say | Murmur sends |
+|---|---|
+| 可以的，周四我有空，不过能不能把电话改到四点？我三点半之前还有一个会。 | Sure, I'm free on Thursday, but could we move the call to 4:00? I have another meeting until 3:30. |
+
+Press <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> instead, and say it in the language you think in. What goes in is in the language you're writing to.
+
+- **It reads like you wrote it in English,** not like a transcript run through a dictionary. Murmur cleans up what you said first, then translates the clean version.
+- **English is only the default.** Pick any language your model writes: Japanese, French, German, Korean and more.
+- **The capsule shows where your words are going** while you speak, so you always know which shortcut you pressed.
+- **Already typed it in Chinese?** Select the text and press <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> to translate it in place.
+
+<br>
+
+## Fix what's already written.
+
+<p align="center">
+  <img src="docs/media/rewrite.webp" width="100%" alt="In a document, the user selects a rough sentence and presses Control-X. The sentence is replaced with a clear, well-written version.">
+</p>
+
+Select a sentence, a paragraph or a whole draft, and press <kbd>⌃</kbd> <kbd>X</kbd>. No microphone this time: Murmur rewrites the selection with your prompt and puts the result in its place.
+
+If you click elsewhere or change the selection while it works, Murmur won't overwrite the wrong text. The result waits on your clipboard instead.
+
+<br>
+
+## Never lose a word.
+
+<p align="center">
+  <img src="docs/media/offline.webp" width="100%" alt="The user is dictating client notes when the Wi-Fi drops. The capsule shows Reconnecting while the user keeps talking. When the connection returns, Murmur catches up, and the full note is inserted.">
+</p>
+
+The worst thing a dictation app can do is throw away two minutes of what you just said. Murmur is built so that never happens.
+
+- **Wi-Fi drops mid-sentence? Keep talking.** The capsule says *Reconnecting*. Murmur keeps recording, reconnects on its own, catches up on what you said in the meantime and carries on, without missing a word or counting one twice.
+- **Every recording is kept on your Mac until its words are in.** If the network never comes back, or your Mac restarts in the middle, choose **Transcribe Again** from the menu bar later and get the whole thing back. A dictation cut off by a crash or a quit is offered again the next time Murmur starts.
+- **Your words get through even when the AI doesn't.** If polishing fails, what you said goes in as it was heard. If translating fails, the polished text goes in. You get something every time.
+- **The clipboard moved on?** The menu bar keeps your last result, and the transcript exactly as it was heard, ready to copy.
+
+<br>
+
+## See the time you get back.
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/window-overview-dark.webp">
+    <img src="docs/media/window-overview-light.webp" width="100%" alt="Murmur's Overview page: today's characters, minutes saved against typing and number of uses, and a chart of the last 14 days.">
+  </picture>
+</p>
+
+Murmur counts what you've written, how often you used it and how many minutes you saved against typing, today and across the last two weeks. It counts, and that's all: the text itself is never kept.
+
+<br>
+
+## A capsule, not a window.
+
+<p align="center">
+  <img src="docs/media/capsule.webp" width="100%" alt="The capsule in six states: listening with live words, listening for translation with an English badge, polishing, translating, reconnecting while still recording, and done.">
+</p>
+
+While you work, Murmur is a small capsule at the bottom of the screen. It shows your words as you say them and what's happening after you stop, then tells you when the text is in. It never takes the focus away from the app you're typing in, and <kbd>Esc</kbd> stays yours: it keeps working in your app as usual.
+
+<br>
+
+## Yours, end to end.
+
+- **No account, no subscription, no Murmur server in between.** You bring your own speech key and model key and pay those providers directly, only for what you use.
+- **Your voice goes only to the speech service. Your text goes only to the model you chose.** Point Murmur at a model running on your Mac, and your text never leaves it.
+- **Keys stay on your Mac,** readable only by your account. Each recording is deleted as soon as its words are in.
+- **Speech recognition is Doubao's,** from Volcengine: strong on Chinese, on English, and on the mix of the two that many of us actually speak.
+
+<br>
+
+## Get started
+
+### 1 · Install
+
+[Download the latest Murmur](https://github.com/MockingFinch/murmur/releases/latest) (`Murmur-<version>.dmg`) and drag it to **Applications**. Murmur needs macOS 26 or later on an Apple silicon Mac.
+
+Murmur isn't notarized by Apple, so macOS blocks the first launch. Click **Done**, open **System Settings → Privacy & Security**, and click **Open Anyway**. Or run this once in Terminal:
+
+```bash
+xattr -dr com.apple.quarantine /Applications/Murmur.app
+```
+
+Murmur lives in the menu bar. Its window opens on its own until setup is done.
+
+### 2 · Connect speech and a model
+
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/media/window-speech-dark.webp">
+    <img src="docs/media/window-speech-light.webp" width="88%" alt="Murmur's Speech page, with the Doubao API key filled in and billing by duration selected.">
+  </picture>
+</p>
+
+- **Speech:** paste your Doubao key from the [Volcengine console](https://console.volcengine.com/speech/app). Choose *API Key* if you have the new console, or *App ID + Token* for the classic one. Pick the billing you opened, by duration or by concurrency, then click **Test Connection**.
+- **Polish** (optional, but it's what makes Murmur Murmur): enter a model API's address, its key and the model's name. Anything that speaks the OpenAI API works: OpenRouter (the default), OpenAI, DeepSeek, or a model running on your Mac (no key needed). Click **Test**, then **Try it** to see your prompt work on a sample. Without a model, Murmur inserts your words as they were heard.
+- **Translate** (optional): pick the language to translate into. It uses the model from Polish, so there's nothing else to set up.
+
+### 3 · Allow the microphone and Accessibility
+
+On the **Shortcut** page, allow the **Microphone** and **Accessibility**. Accessibility is what lets Murmur read a selection and type the result into other apps. On macOS 27, System Settings calls it **Device Control and Data Access**, under Privacy & Security.
+
+Then press <kbd>⌃</kbd> <kbd>X</kbd> anywhere and say something.
+
+<br>
+
+## At a glance
+
+| | Nothing selected | Text selected |
+|---|---|---|
+| <kbd>⌃</kbd> <kbd>X</kbd> | Dictate, polish, insert | Rewrite the selection with your prompt |
+| <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> | Dictate, polish, translate, insert | Translate the selection |
+
+- Either shortcut ends a dictation. The one you started with decides whether it's translated.
+- To cancel, choose **Cancel** from the menu bar icon.
+- Both shortcuts can be changed: <kbd>⌃</kbd> <kbd>X</kbd> on the Shortcut page, <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> on the Translate page.
+- A dictation can run for up to 15 minutes. The timer turns amber in the last minute, and what you said goes in as usual.
+
+<br>
+
+## Questions
+
+<details>
+<summary><b>Where exactly does the text go?</b></summary>
+<br>
+
+Into the text field where your cursor is. If there's no cursor, Murmur clicks into the text field under your mouse pointer and types there. If there's no text field at all, the text waits on your clipboard and the capsule tells you so. Every result is on the clipboard either way.
+</details>
+
+<details>
+<summary><b>What does it cost?</b></summary>
+<br>
+
+Murmur is free. You pay Doubao for speech recognition and your model provider for polishing, at their own rates, only for what you use. Polishing one dictation is one short request, so a small, fast model costs very little. A model running on your Mac costs nothing.
+</details>
+
+<details>
+<summary><b>Which languages does it understand?</b></summary>
+<br>
+
+Murmur is tuned for Chinese and English speakers: Doubao recognizes both, including sentences that switch between them. Translation can go into any language your model writes well.
+</details>
+
+<details>
+<summary><b>Does it work offline?</b></summary>
+<br>
+
+Recognition needs Doubao's servers, so Murmur needs a connection to turn speech into text. Losing that connection never costs you what you said, though: Murmur keeps recording, catches up when the connection returns, and keeps the recording on your Mac for **Transcribe Again** if it doesn't.
+</details>
+
+<details>
+<summary><b>Pasting stopped working after an update, though Murmur is switched on.</b></summary>
+<br>
+
+macOS ties the Accessibility switch to the app's signature. Releases from 1.1.0 on share the same signature, so updates between them keep it. Coming from 1.0.0, or from a build of your own, macOS sees a different app: the old entry still shows as on, but no longer applies.
+
+In **System Settings → Privacy & Security → Accessibility** (Device Control and Data Access on macOS 27), select Murmur and remove it with **−**. Then, on Murmur's Shortcut page, click **Open Settings** and switch the new entry on.
+</details>
+
+<details>
+<summary><b>What does Murmur keep on my Mac?</b></summary>
+<br>
 
 | What | Where |
 |---|---|
 | API keys | `~/Library/Application Support/Murmur/credentials.json`, readable only by your account |
-| Settings | `UserDefaults` (`local.murmur.dictation`) |
+| Settings, translation language and prompts | macOS preferences (`local.murmur.dictation`) |
 | Statistics | `~/Library/Application Support/Murmur/usage.json`: counts and timings only, never text |
-| Translation language and prompt | `UserDefaults`, with the other settings |
-| Recordings | `~/Library/Application Support/Murmur/Recordings`, readable only by your account. Each one is deleted as soon as its text is in. One that couldn't be transcribed in full is kept for 7 days at most, or until you delete it from the menu bar |
-| Last result and transcript | Memory only, for the menu bar's Copy items; gone when Murmur quits |
+| Recordings | `~/Library/Application Support/Murmur/Recordings`, readable only by your account. Each is deleted as soon as its words are in. One that couldn't be transcribed in full is kept for 7 days at most, or until you delete it from the menu bar |
+| Last result and transcript | Memory only, for the menu bar's Copy items. Gone when Murmur quits |
 
-Audio goes only to Doubao. Text goes only to the model API you set up. Updates and rebuilds keep all of the above.
+Updates keep all of it.
+</details>
 
-## Build from source
+<br>
 
-```bash
-scripts/build.sh --open     # Swift 6 toolchain, macOS 26 SDK
-```
+---
 
-macOS remembers Accessibility and Microphone permissions by an app's signature. Builds are ad-hoc signed by default, so each one looks like a new app: its Accessibility entry has to be removed and allowed again, as described above. To avoid that, create a local signing certificate once:
-
-```bash
-scripts/setup-signing.sh
-```
-
-It lives in its own keychain file in `~/Library/Application Support/Murmur/Signing`, separate from your login keychain and outside the repo. Every later build is signed with it, so permissions survive rebuilds. To use your own certificate instead, set `MURMUR_SIGN_IDENTITY`.
-
-`scripts/release.sh` builds the `.dmg` and `.zip` for a release.
-
-## Development
-
-```bash
-swift test                                     # protocol, streaming, retry and timeout tests against local fake servers
-.build/debug/Murmur --snapshot /tmp/murmur     # render every capsule state and settings page to PNG
-.build/debug/Murmur --check-navigation         # check that switching pages redraws the window
-```
-
-`Sources/MurmurCore` holds the Doubao binary protocol, the client for OpenAI-compatible model APIs and the statistics math, with no UI. `Sources/Murmur` is the app: `Engine/` runs a session, `System/` handles hotkeys, audio, saved keys and text insertion, and `Overlay/` and `UI/` are the interface.
+<p align="center">
+  <a href="docs/BACKGROUND.md"><b>Why Murmur exists</b></a> &nbsp;·&nbsp;
+  <a href="docs/DEVELOPMENT.md"><b>Build it yourself</b></a> &nbsp;·&nbsp;
+  <a href="https://github.com/MockingFinch/murmur/releases"><b>Release notes</b></a>
+</p>

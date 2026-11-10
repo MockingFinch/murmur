@@ -5,13 +5,18 @@ import ServiceManagement
 
 @MainActor
 enum Permissions {
-    static var microphone: AVAuthorizationStatus { AVCaptureDevice.authorizationStatus(for: .audio) }
+    /// Screenshots of a set-up app show both permissions granted.
+    nonisolated(unsafe) static var assumeGranted = false
+
+    static var microphone: AVAuthorizationStatus {
+        assumeGranted ? .authorized : AVCaptureDevice.authorizationStatus(for: .audio)
+    }
 
     static func requestMicrophone() async -> Bool {
         await AVCaptureDevice.requestAccess(for: .audio)
     }
 
-    static var accessibility: Bool { AXIsProcessTrusted() }
+    static var accessibility: Bool { assumeGranted || AXIsProcessTrusted() }
 
     /// What System Settings calls the Accessibility permission. macOS 27
     /// lists it under Privacy & Security as "Device Control and Data Access".

@@ -378,3 +378,59 @@ struct LinkLabel: View {
         }
     }
 }
+
+// MARK: - Shadows
+
+/// A soft drop shadow under a rounded rectangle. When `prerendered` is on
+/// (recording the README's demos), it is drawn from an image rendered once
+/// and stretched: the same look, at a fraction of the cost offscreen.
+struct SoftShadow: ViewModifier {
+    nonisolated(unsafe) static var prerendered = false
+    @MainActor private static var plates: [String: NSImage] = [:]
+
+    let cornerRadius: CGFloat
+    let opacity: Double
+    let radius: CGFloat
+    var y: CGFloat = 0
+
+    func body(content: Content) -> some View {
+        if Self.prerendered {
+            let margin = (radius * 2).rounded(.up)
+            let cap = margin + cornerRadius
+            content.background {
+                Image(nsImage: Self.plate(cornerRadius, opacity, radius))
+                    .resizable(capInsets: EdgeInsets(top: cap, leading: cap, bottom: cap, trailing: cap))
+                    .padding(-margin)
+                    .offset(y: y)
+                    .allowsHitTesting(false)
+            }
+        } else {
+            content.shadow(color: .black.opacity(opacity), radius: radius, y: y)
+        }
+    }
+
+    @MainActor private static func plate(_ corner: CGFloat, _ opacity: Double, _ radius: CGFloat) -> NSImage {
+        let key = "\(corner)-\(opacity)-\(radius)"
+        if let cached = plates[key] { return cached }
+        let margin = (radius * 2).rounded(.up)
+        let side = 2 * (margin + corner) + 2
+        let scale: CGFloat = 2
+        let px = Int(side * scale)
+        guard let ctx = CGContext(data: nil, width: px, height: px, bitsPerComponent: 8, bytesPerRow: 0,
+                                  space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                  bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return NSImage() }
+        ctx.scaleBy(x: scale, y: scale)
+        // Only the shadow: the shape is drawn far away, its shadow cast back here.
+        let away: CGFloat = 10_000
+        let rect = CGRect(x: margin + away, y: margin, width: side - 2 * margin, height: side - 2 * margin)
+        ctx.setShadow(offset: CGSize(width: -away * scale, height: 0), blur: radius * scale,
+                      color: NSColor.black.withAlphaComponent(opacity).cgColor)
+        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: corner, cornerHeight: corner, transform: nil))
+        ctx.setFillColor(NSColor.black.cgColor)
+        ctx.fillPath()
+        guard let cg = ctx.makeImage() else { return NSImage() }
+        let image = NSImage(cgImage: cg, size: NSSize(width: side, height: side))
+        plates[key] = image
+        return image
+    }
+}

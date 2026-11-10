@@ -10,11 +10,13 @@ import MurmurCore
 enum SecretStore {
     /// Development runs (snapshots, self-checks) never read or write real keys.
     nonisolated(unsafe) static var disabled = false
+    /// Placeholder keys for screenshots of a set-up app; never real ones.
+    nonisolated(unsafe) static var placeholders: [String: String] = [:]
 
     private static var file: URL { AppFiles.directory.appendingPathComponent("credentials.json") }
 
     static func read(_ account: String) -> String {
-        guard !disabled else { return "" }
+        guard !disabled else { return placeholders[account] ?? "" }
         return load()[account] ?? ""
     }
 

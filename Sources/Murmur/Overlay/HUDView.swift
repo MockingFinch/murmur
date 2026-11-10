@@ -98,7 +98,7 @@ private struct HUDCapsule: View {
         .background(surface)
         .clipShape(shape)
         .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.24), .white.opacity(0.05)], startPoint: .top, endPoint: .bottom), lineWidth: 0.6))
-        .shadow(color: .black.opacity(0.32), radius: 22, y: 12)
+        .modifier(SoftShadow(cornerRadius: 23, opacity: 0.32, radius: 22, y: 12))
         .keyframeAnimator(initialValue: CGFloat(0), trigger: model.shakes) { content, x in
             content.offset(x: x)
         } keyframes: { _ in
