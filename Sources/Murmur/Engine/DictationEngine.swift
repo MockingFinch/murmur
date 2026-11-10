@@ -58,7 +58,13 @@ final class DictationEngine {
     /// Recordings whose words aren't all in yet.
     let recordings = RecordingStore(directory: AppFiles.directory.appendingPathComponent("Recordings", isDirectory: true))
     private var work: Task<Void, Never>?
+    /// Ends a dictation by itself: at the length limit, or once Doubao has
+    /// heard nothing new for a while.
     private var autoStop: Task<Void, Never>?
+    /// How long Doubao has heard nothing new, while it's connected.
+    private var silence: SilenceWatch?
+    /// The quiet allowed in the current dictation, as set when it began.
+    private var quietLimit = SilenceWatch.defaultLimit
     private var lastPress = Date.distantPast
     /// Numbers sessions: a late callback from a cancelled one changes nothing.
     private var run = 0
@@ -86,6 +92,7 @@ final class DictationEngine {
         run += 1
         work?.cancel()
         autoStop?.cancel()
+        silence = nil
         transcriber?.cancel()
         capture?.stop()
         writer?.close()
@@ -197,15 +204,30 @@ final class DictationEngine {
         self.transcriber = transcriber
         transcriber.start()
 
+        // A shortcut pressed by accident, or a dictation forgotten, would
+        // otherwise run up the Doubao bill until the length limit.
+        let started = Date()
+        quietLimit = settings.quietStop
+        silence = SilenceWatch(limit: quietLimit, start: started)
         autoStop = Task { [weak self] in
-            try? await Task.sleep(nanoseconds: UInt64(Self.maxRecording * 1_000_000_000))
-            guard !Task.isCancelled, let self, self.run == id, self.state == .listening else { return }
-            self.stopListening(.limit)
+            while !Task.isCancelled {
+                try? await Task.sleep(nanoseconds: 500_000_000)
+                guard !Task.isCancelled, let self, self.run == id, self.state == .listening else { return }
+                let now = Date()
+                if now.timeIntervalSince(started) >= Self.maxRecording {
+                    self.stopListening(.limit)
+                    return
+                }
+                if self.silence?.expired(at: now) == true {
+                    self.stopListening(.quiet)
+                    return
+                }
+            }
         }
     }
 
     /// Why listening ended, when it wasn't the user's choice.
-    private enum StopReason { case user, limit, microphoneLost }
+    private enum StopReason { case user, limit, quiet, microphoneLost }
 
     /// No microphone left to listen with: what was said so far goes in.
     private func microphoneLost() {
@@ -218,6 +240,7 @@ final class DictationEngine {
         let id = run
         state = .working
         autoStop?.cancel()
+        silence = nil
         capture.stop()
         writer?.close()
         writer = nil
@@ -264,6 +287,7 @@ final class DictationEngine {
 
     private func heard(_ text: String, _ id: Int) {
         guard id == run else { return }
+        if state == .listening { silence?.heard(text) }
         switch hud.mode {
         case .listening, .transcribing: hud.liveText = text
         default: break
@@ -277,11 +301,14 @@ final class DictationEngine {
         let transcribing: Bool = { if case .transcribing = hud.mode { return true }; return false }()
         switch status {
         case .live:
+            silence?.connected(true)
             hud.link = .live
             if transcribing { hud.show(.transcribing(retry: 0)) }
         case .reconnecting(let attempt, _):
+            silence?.connected(false)
             if state == .listening { hud.link = .reconnecting } else if transcribing { hud.show(.transcribing(retry: attempt)) }
         case .unavailable:
+            silence?.connected(false)
             if state == .listening { hud.link = .recordingOnly }
         }
     }
@@ -312,7 +339,8 @@ final class DictationEngine {
         let raw = outcome.text.trimmingCharacters(in: .whitespacesAndNewlines)
         if raw.isEmpty {
             forgetSaved()
-            end(.notice(.init(tone: .info, title: "No speech detected", detail: nil)))
+            end(.notice(.init(tone: .info, title: reason == .quiet ? "Stopped listening" : "No speech detected",
+                              detail: reason == .quiet ? "Nothing was heard for \(Self.spoken(quietLimit))." : nil)))
             return
         }
 
@@ -395,6 +423,8 @@ final class DictationEngine {
             if let missing {
                 Cue.play(.problem)
                 end(.notice(.init(tone: .warning, title: title, detail: "\(missing). \(Self.savedNote)")))
+            } else if reason == .quiet {
+                end(.notice(.init(tone: .warning, title: title, detail: "\(quietNote) \(why)")))
             } else {
                 end(.notice(.init(tone: .warning, title: title, detail: why)))
             }
@@ -414,6 +444,9 @@ final class DictationEngine {
             } else if reason == .limit {
                 end(.notice(.init(tone: .info, title: translated ? "Translated, inserted and copied" : "Inserted and copied",
                                   detail: "Dictations stop at \(Int(Self.maxRecording / 60)) minutes. Press \(settings.shortcut.display) to go on.")))
+            } else if reason == .quiet {
+                end(.notice(.init(tone: .info, title: translated ? "Translated, inserted and copied" : "Inserted and copied",
+                                  detail: quietNote)))
             } else if reason == .microphoneLost {
                 Cue.play(.problem)
                 end(.notice(.init(tone: .warning, title: translated ? "Translated, inserted and copied" : "Inserted and copied",
@@ -426,6 +459,19 @@ final class DictationEngine {
 
     /// How a saved recording is found again.
     private static let savedNote = "The recording is saved: Transcribe Again from the menu bar."
+
+    /// Why a dictation ended without the shortcut.
+    private var quietNote: String {
+        "Stopped listening after \(Self.spoken(quietLimit)) without new words."
+    }
+
+    /// "30 seconds", "1 minute", "2 minutes".
+    static func spoken(_ seconds: Double) -> String {
+        let s = Int(seconds.rounded())
+        if s < 60 { return "\(s) seconds" }
+        if s % 60 == 0 { return s == 60 ? "1 minute" : "\(s / 60) minutes" }
+        return String(format: "%d:%02d minutes", s / 60, s % 60)
+    }
 
     /// The recording behind this session is no longer needed.
     private func forgetSaved() {

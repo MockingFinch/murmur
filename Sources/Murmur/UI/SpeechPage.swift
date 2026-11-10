@@ -66,10 +66,30 @@ struct SpeechPage: View {
                 }
             }
         }
+
+        PageSection(title: "Listening") {
+            Card {
+                SettingRow(title: "Stop when it's quiet",
+                           detail: "When Doubao hears no new words for this long, Murmur stops listening and carries on with what you said. A shortcut pressed by accident won't keep running up your Doubao bill.") {
+                    Picker("", selection: $settings.quietStop) {
+                        ForEach(quietChoices, id: \.self) { s in
+                            Text(s == SilenceWatch.defaultLimit ? "\(DictationEngine.spoken(s)) (default)" : DictationEngine.spoken(s)).tag(s)
+                        }
+                    }
+                    .labelsHidden()
+                    .fixedSize()
+                }
+            }
+        }
         .onChange(of: settings.doubaoKey) { check = .idle }
         .onChange(of: settings.doubaoAppID) { check = .idle }
         .onChange(of: settings.doubaoResource) { check = .idle }
         .onChange(of: settings.doubaoAuth) { check = .idle }
+    }
+
+    private var quietChoices: [Double] {
+        let base: [Double] = [30, 60, 120, 180, 300, 600]
+        return base.contains(settings.quietStop) ? base : (base + [settings.quietStop]).sorted()
     }
 
     /// Opens a real stream: Doubao checks the key, the resource and the

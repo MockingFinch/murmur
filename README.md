@@ -180,6 +180,7 @@ Then press <kbd>⌃</kbd> <kbd>X</kbd> anywhere and say something.
 - To cancel, choose **Cancel** from the menu bar icon.
 - Both shortcuts can be changed: <kbd>⌃</kbd> <kbd>X</kbd> on the Shortcut page, <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> on the Translate page.
 - A dictation can run for up to 15 minutes. The timer turns amber in the last minute, and what you said goes in as usual.
+- **Forgot it was listening?** When Doubao hears no new words for 2 minutes, Murmur stops by itself and carries on with what you said, so a shortcut pressed by accident never runs up your bill. Set your own time on the Speech page.
 
 <br>
 
@@ -196,7 +197,7 @@ Into the text field where your cursor is. If there's no cursor, Murmur clicks in
 <summary><b>What does it cost?</b></summary>
 <br>
 
-Murmur is free. You pay Doubao for speech recognition and your model provider for polishing, at their own rates, only for what you use. Polishing one dictation is one short request, so a small, fast model costs very little. A model running on your Mac costs nothing.
+Murmur is free. You pay Doubao for speech recognition and your model provider for polishing, at their own rates, only for what you use. Polishing one dictation is one short request, so a small, fast model costs very little. A model running on your Mac costs nothing. And a dictation started by accident stops by itself after 2 minutes of quiet, instead of billing you until you notice.
 </details>
 
 <details>

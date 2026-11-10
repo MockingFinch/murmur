@@ -72,6 +72,8 @@ final class AppSettings {
     /// Seconds to wait for the model, retries included, before inserting the transcript as it is.
     var polishTimeout: Double { didSet { defaults.set(polishTimeout, forKey: "polish.timeout") } }
     var sounds: Bool { didSet { defaults.set(sounds, forKey: "sounds") } }
+    /// Seconds without new words from Doubao after which listening stops by itself.
+    var quietStop: Double { didSet { defaults.set(quietStop, forKey: "listen.quietStop") } }
 
     static let defaultModel = "google/gemini-3.1-flash-lite"
 
@@ -93,6 +95,7 @@ final class AppSettings {
         prompt = defaults.string(forKey: "prompt") ?? PolishPrompt.defaultInstructions
         polishTimeout = defaults.object(forKey: "polish.timeout") as? Double ?? OpenRouterClient.defaultTimeout
         sounds = defaults.object(forKey: "sounds") as? Bool ?? true
+        quietStop = defaults.object(forKey: "listen.quietStop") as? Double ?? SilenceWatch.defaultLimit
         doubaoKey = SecretStore.read("doubao")
         openRouterKey = SecretStore.read("llm")
     }

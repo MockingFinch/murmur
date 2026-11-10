@@ -38,6 +38,7 @@ The tests run against local fake servers, so they need no keys and no network:
 - `NetworkTests`: streaming, retries, timeouts and stalls against a fake Doubao server and a fake model API
 - `ResilienceTests`: recognition that survives dropped connections, refusals and a server that never returns
 - `RecordingStoreTests`: recordings written to disk as they grow, listed and cleaned up
+- `SilenceWatchTests`: when a quiet dictation ends, and that time spent reconnecting doesn't count
 
 ## Release
 
@@ -97,7 +98,7 @@ The scripts, mock windows and wallpaper are in `Sources/Murmur/App/Films.swift`,
 
 ## Code layout
 
-- `Sources/MurmurCore`: everything without UI. The Doubao binary protocol and streaming session, recognition that survives dropped connections (`ResilientTranscriber`), recordings on disk (`RecordingStore`), the client for OpenAI-compatible model APIs, the polish and translate prompts, shortcuts and the statistics math.
+- `Sources/MurmurCore`: everything without UI. The Doubao binary protocol and streaming session, recognition that survives dropped connections (`ResilientTranscriber`), recordings on disk (`RecordingStore`), noticing a dictation that has gone quiet (`SilenceWatch`), the client for OpenAI-compatible model APIs, the polish and translate prompts, shortcuts and the statistics math.
 - `Sources/Murmur`: the app.
   - `Engine/` runs a session from shortcut to insertion, and holds the capsule's state.
   - `System/` handles hotkeys, audio capture, sounds, permissions, saved keys and settings, and reading and inserting text.
@@ -137,3 +138,4 @@ What Murmur does when something goes wrong, in detail. The rule behind all of it
 **Limits**
 
 - A dictation stops at 15 minutes. The timer turns amber in the last minute. What was said goes in as usual.
+- A dictation also stops once Doubao has heard no new words for 2 minutes (Speech → Listening, from 30 seconds to 10 minutes), so a shortcut pressed by accident doesn't keep recognition running and billed. It makes no difference whether nothing was said at all or the user has finished. Only time connected to Doubao counts: while it reconnects nothing is billed, and words already spoken may still be catching up. What was said then goes in as usual. If nothing was, the recording is discarded.
