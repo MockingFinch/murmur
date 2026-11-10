@@ -59,18 +59,34 @@ final class DoubaoCodecTests: XCTestCase {
         XCTAssertEqual(SpeechError.fromServer(code: 45_000_001, payload: Data(#"{"message":"invalid access key"}"#.utf8)).kind, .auth)
     }
 
-    func testStartRequestAsksForTheSecondPassOnlyOnAsync() throws {
-        let on = try JSONSerialization.jsonObject(with: DoubaoAPI.startRequest(secondPass: true)) as! [String: Any]
-        let off = try JSONSerialization.jsonObject(with: DoubaoAPI.startRequest(secondPass: false)) as! [String: Any]
-        XCTAssertEqual((on["request"] as! [String: Any])["enable_nonstream"] as? Bool, true)
-        XCTAssertNil((off["request"] as! [String: Any])["enable_nonstream"])
-        XCTAssertEqual((on["audio"] as! [String: Any])["rate"] as? Int, 16_000)
-        XCTAssertEqual(DoubaoAPI.endpoint(for: "volc.bigasr.sauc.duration"), DoubaoAPI.duplexEndpoint)
-        XCTAssertEqual(DoubaoAPI.endpoint(for: "volc.seedasr.sauc.duration"), DoubaoAPI.asyncEndpoint)
+    func testStartRequestAsksForTheSecondPass() throws {
+        let start = try JSONSerialization.jsonObject(with: DoubaoAPI.startRequest()) as! [String: Any]
+        XCTAssertEqual((start["request"] as! [String: Any])["enable_nonstream"] as? Bool, true)
+        XCTAssertEqual((start["audio"] as! [String: Any])["rate"] as? Int, 16_000)
+        XCTAssertEqual(DoubaoAPI.endpoint.path, "/api/v3/sauc/bigmodel_async")
+    }
+
+    func testOnlyDoubaoASR2IsOffered() {
+        XCTAssertEqual(DoubaoAPI.resources.map(\.id), ["volc.seedasr.sauc.duration", "volc.seedasr.sauc.concurrent"])
+        // 1.0 choices saved by earlier versions move to 2.0, billed the same way.
+        XCTAssertEqual(DoubaoAPI.current("volc.bigasr.sauc.duration"), "volc.seedasr.sauc.duration")
+        XCTAssertEqual(DoubaoAPI.current("volc.bigasr.sauc.concurrent"), "volc.seedasr.sauc.concurrent")
+        XCTAssertEqual(DoubaoAPI.current("volc.seedasr.sauc.concurrent"), "volc.seedasr.sauc.concurrent")
     }
 }
 
 final class SSEParserTests: XCTestCase {
+    func testAnAnswerCutOffAtTheLengthLimitIsNotUsed() throws {
+        var p = SSEChunkParser()
+        _ = try p.consume(#"data: {"choices":[{"delta":{"content":"第一句。第二"},"finish_reason":"length"}]}"#)
+        _ = try p.consume("data: [DONE]")
+        XCTAssertThrowsError(try p.finish()) { e in
+            let f = e as! PolishFailure
+            XCTAssertEqual(f.kind, .truncated)
+            XCTAssertFalse(f.retryable, "the same request would be cut off again")
+        }
+    }
+
     func testStreamWithKeepAlivesThinkingAndDone() throws {
         var p = SSEChunkParser()
         XCTAssertEqual(try p.consume(": OPENROUTER PROCESSING"), .keepAlive)
@@ -157,7 +173,8 @@ final class ReasoningTests: XCTestCase {
           {"id":"g/flash","name":"G Flash","created":10,"context_length":1000,
            "architecture":{"output_modalities":["text"]},"endpoints":["/api/v1/chat/completions"],
            "pricing":{"prompt":"0.0000001","completion":"0.0000004"},
-           "supported_parameters":["reasoning"],"reasoning":{"mandatory":true,"supported_efforts":["high","low"]}},
+           "supported_parameters":["reasoning"],"reasoning":{"mandatory":true,"supported_efforts":["high","low"]},
+           "top_provider":{"max_completion_tokens":8192}},
           {"id":"g/flash:batch","name":"batch","architecture":{"output_modalities":["text"]}},
           {"id":"g/image","name":"Image","architecture":{"output_modalities":["image"]}}
         ]}
@@ -166,6 +183,10 @@ final class ReasoningTests: XCTestCase {
         XCTAssertEqual(models.map(\.id), ["g/flash"])
         XCTAssertEqual(models[0].inputPrice, 0.1, accuracy: 1e-9)
         XCTAssertTrue(models[0].reasoningMandatory)
+        XCTAssertEqual(models[0].maxOutput, 8192)
+        // Saved before the field existed: still reads.
+        let old = #"{"id":"a/b","name":"A","inputPrice":0,"outputPrice":0,"contextLength":0,"created":0,"supportsReasoning":false,"reasoningMandatory":false,"efforts":[]}"#
+        XCTAssertNil(try JSONDecoder().decode(OpenRouterModel.self, from: Data(old.utf8)).maxOutput)
     }
 
     func testHTTPFailures() {

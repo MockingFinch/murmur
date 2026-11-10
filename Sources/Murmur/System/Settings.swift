@@ -81,7 +81,11 @@ final class AppSettings {
         translatePrompt = defaults.string(forKey: "translate.prompt") ?? TranslatePrompt.defaultInstructions
         doubaoAuth = DoubaoAuth(rawValue: defaults.string(forKey: "doubao.auth") ?? "") ?? .apiKey
         doubaoAppID = defaults.string(forKey: "doubao.appID") ?? ""
-        doubaoResource = defaults.string(forKey: "doubao.resource") ?? DoubaoAPI.defaultResource
+        let savedResource = defaults.string(forKey: "doubao.resource")
+        let resource = DoubaoAPI.current(savedResource ?? DoubaoAPI.defaultResource)
+        doubaoResource = resource
+        // A Doubao ASR 1.0 choice from an earlier version is saved as its 2.0 match.
+        if let savedResource, savedResource != resource { defaults.set(resource, forKey: "doubao.resource") }
         openRouterBase = defaults.string(forKey: "llm.base") ?? OpenRouterClient.defaultBase.absoluteString
         openRouterModel = defaults.string(forKey: "openrouter.model") ?? Self.defaultModel
         prompt = defaults.string(forKey: "prompt") ?? PolishPrompt.defaultInstructions

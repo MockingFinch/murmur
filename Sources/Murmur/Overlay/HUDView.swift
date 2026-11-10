@@ -46,7 +46,9 @@ private struct HUDCapsule: View {
 
     private var width: CGFloat {
         switch mode {
-        case .listening: return line == nil ? (model.target == nil ? 214 : 300) : Self.textWidth
+        case .listening:
+            guard line == nil else { return Self.textWidth }
+            return 214 + (model.target == nil ? 0 : 86) + (model.link == .live ? 0 : 118)
         case .transcribing: return line == nil ? 214 : Self.textWidth
         case .model: return Self.textWidth
         case .done(let title): return CGFloat(min(320, 92 + title.count * 8))
@@ -88,7 +90,8 @@ private struct HUDCapsule: View {
                 trailing
             }
             .padding(.horizontal, 14)
-            .frame(height: 46)
+            // A notice with two lines of detail grows; nothing else does.
+            .frame(minHeight: 46)
         }
         .frame(width: width)
         .background(glow)
@@ -202,7 +205,7 @@ private struct HUDCapsule: View {
                 .transition(.opacity)
         case .transcribing(let retry):
             HStack(spacing: 10) {
-                Shimmering(text: retry > 0 ? "Reconnecting · \(retry) of 2" : "Transcribing")
+                Shimmering(text: retry > 0 ? "Reconnecting · \(retry)" : "Transcribing")
                 Waveform(model: model, settling: true).frame(width: 46, height: 18)
             }
             .transition(.blurReplace)
@@ -240,9 +243,11 @@ private struct HUDCapsule: View {
     @ViewBuilder private var trailing: some View {
         if case .listening = mode {
             HStack(spacing: 8) {
+                if model.link != .live { LinkBadge(link: model.link).transition(.blurReplace) }
                 if let target = model.target { TargetBadge(language: target) }
-                ElapsedLabel(since: model.startedAt)
+                ElapsedLabel(since: model.startedAt, limit: DictationEngine.maxRecording)
             }
+            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: model.link)
             // The waveform gives way; the time and the language never do.
             .fixedSize()
             .transition(.opacity)
@@ -253,7 +258,7 @@ private struct HUDCapsule: View {
     }
 
     private func modelLabel(_ job: HUDModel.Job, _ retry: Int, _ thinking: Bool) -> String {
-        if retry > 0 { return "Retrying · \(retry) of 3" }
+        if retry > 0 { return "Retrying · \(retry) of \(OpenRouterClient.maxAttempts)" }
         if thinking { return "Thinking" }
         switch job {
         case .polish: return "Polishing"
@@ -361,6 +366,29 @@ private struct TargetBadge: View {
     }
 }
 
+/// The stream to Doubao isn't live. Either way the recording goes on, so
+/// the user can keep talking.
+private struct LinkBadge: View {
+    let link: HUDModel.Link
+
+    var body: some View {
+        HStack(spacing: 4) {
+            Image(systemName: link == .reconnecting ? "wifi.exclamationmark" : "record.circle")
+                .font(.system(size: 10, weight: .semibold))
+                .symbolEffect(.pulse, options: .repeating, isActive: link == .reconnecting)
+            Text(link == .reconnecting ? "Reconnecting" : "Recording only")
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .fixedSize()
+        }
+        .foregroundStyle(Brand.amber)
+        .padding(.horizontal, 7)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(Brand.amber.opacity(0.14)))
+        .overlay(Capsule().strokeBorder(Brand.amber.opacity(0.28), lineWidth: 0.5))
+        .accessibilityLabel(link == .reconnecting ? "Reconnecting to Doubao; keep talking" : "Recording only; Doubao refused")
+    }
+}
+
 private struct RecordingDot: View {
     let model: HUDModel
 
@@ -425,16 +453,19 @@ private struct Shimmering: View {
     }
 }
 
+/// Time recorded; amber in the last minute before the limit stops it.
 private struct ElapsedLabel: View {
     let since: Date
+    let limit: TimeInterval
 
     var body: some View {
         TimelineView(.periodic(from: since, by: 1)) { ctx in
             let s = max(0, Int(ctx.date.timeIntervalSince(since)))
+            let closing = Double(s) >= limit - 60
             Text(String(format: "%d:%02d", s / 60, s % 60))
-                .font(.system(size: 12.5, weight: .medium, design: .rounded))
+                .font(.system(size: 12.5, weight: closing ? .semibold : .medium, design: .rounded))
                 .monospacedDigit()
-                .foregroundStyle(.white.opacity(0.6))
+                .foregroundStyle(closing ? AnyShapeStyle(Brand.amber) : AnyShapeStyle(.white.opacity(0.6)))
                 .contentTransition(.numericText())
                 .animation(.snappy, value: s)
         }

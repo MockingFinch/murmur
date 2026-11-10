@@ -157,7 +157,7 @@ final class OpenRouterNetworkTests: XCTestCase {
         XCTAssertEqual(server.requestCount, 1)
     }
 
-    func testGivesUpAfterThreeAttempts() async throws {
+    func testGivesUpAfterFiveAttempts() async throws {
         let server = try FakeHTTPServer { _, _ in
             [.write(FakeHTTPServer.head(502, "Bad Gateway", contentType: "application/json")), .write(#"{"error":{"code":502,"message":"Provider returned error"}}"#)]
         }
@@ -167,7 +167,33 @@ final class OpenRouterNetworkTests: XCTestCase {
         } catch let e as PolishFailure {
             XCTAssertEqual(e.kind, .server)
         }
-        XCTAssertEqual(server.requestCount, 3)
+        XCTAssertEqual(server.requestCount, 5)
+    }
+
+    func testTheFifthAttemptCanStillSucceed() async throws {
+        let server = try FakeHTTPServer { index, _ in
+            switch index {
+            case 1: return [.write(FakeHTTPServer.head(503, "Service Unavailable", contentType: "application/json")),
+                            .write(#"{"error":{"code":503,"message":"No provider available"}}"#)]
+            case 2: return [.write(FakeHTTPServer.head(429, "Too Many Requests", contentType: "application/json")),
+                            .write(#"{"error":{"code":429,"message":"Rate limited"}}"#)]
+            case 3: return [.write(FakeHTTPServer.head(200, "OK")), .write(FakeHTTPServer.chunk("half an ans"))] // cut off
+            case 4: return [.write(FakeHTTPServer.head(500, "Internal Server Error", contentType: "application/json")),
+                            .write(#"{"error":{"code":500,"message":"Internal error"}}"#)]
+            default: return [.write(FakeHTTPServer.head(200, "OK")), .write(FakeHTTPServer.chunk("Done.", finish: "stop")),
+                             .write("data: [DONE]\n\n")]
+            }
+        }
+        let out = try await client(server).translate(model: "m", info: nil, instructions: "", input: "完成了。",
+                                                     language: "English") { _ in }
+        XCTAssertEqual(out.text, "Done.")
+        XCTAssertEqual(out.attempts, 5)
+        XCTAssertEqual(server.requestCount, 5)
+    }
+
+    func testFiveAttemptsByDefault() {
+        XCTAssertEqual(OpenRouterClient.Tuning().attempts, 5)
+        XCTAssertEqual(OpenRouterClient.maxAttempts, 5)
     }
 }
 

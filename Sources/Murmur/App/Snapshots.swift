@@ -33,8 +33,18 @@ enum Snapshots {
                 m.startListening(); m.level = 0.3
                 m.liveText = "So the plan for next week is to ship the first draft on Wednesday, collect feedback from the design team on Thursday, and then spend Friday polishing the onboarding flow before we hand it over to QA for a full regression pass."
             }),
+            ("listening-reconnecting", { m in m.startListening(); m.level = 0.5; m.link = .reconnecting }),
+            ("listening-reconnecting-text", { m in
+                m.startListening(translatingTo: "English"); m.level = 0.5; m.link = .reconnecting
+                m.liveText = "我觉得这个方案其实还可以，就是时间上可能有点紧"
+            }),
+            ("listening-recording-only", { m in m.startListening(); m.level = 0.4; m.link = .recordingOnly }),
+            ("listening-last-minute", { m in
+                m.startListening(); m.level = 0.4
+                m.startedAt = Date().addingTimeInterval(-(DictationEngine.maxRecording - 42))
+            }),
             ("transcribing", { m in m.show(.transcribing(retry: 0)) }),
-            ("reconnecting", { m in m.show(.transcribing(retry: 1)) }),
+            ("reconnecting", { m in m.show(.transcribing(retry: 3)) }),
             ("polishing", { m in m.preview = "嗯那个我觉得这个方案呢其实还可以"; m.show(.model(.polish, retry: 0, thinking: false)) }),
             ("polishing-long", { m in
                 m.show(.model(.polish, retry: 0, thinking: false))
@@ -59,6 +69,14 @@ enum Snapshots {
             ("notice-warning", { m in m.show(.notice(.init(tone: .warning, title: "Inserted without polishing", detail: "No complete answer within 180 seconds."))) }),
             ("notice-error", { m in m.show(.notice(.init(tone: .error, title: "Couldn't transcribe", detail: "Doubao didn't accept the key."))) }),
             ("notice-info", { m in m.show(.notice(.init(tone: .info, title: "No speech detected", detail: nil))) }),
+            ("notice-missing", { m in
+                m.show(.notice(.init(tone: .warning, title: "Inserted, but the last 1:12 is missing",
+                                     detail: "The recording is saved: Transcribe Again from the menu bar. Doubao: The network connection was lost.")))
+            }),
+            ("notice-recovered", { m in
+                m.show(.notice(.init(tone: .warning, title: "A recording wasn't transcribed",
+                                     detail: "Nothing is lost: transcribe it again from the Murmur menu bar.")))
+            }),
             ("cancelled", { m in m.show(.cancelled) }),
         ]
         let only = CommandLine.arguments.firstIndex(of: "--only").map { CommandLine.arguments[$0 + 1] }

@@ -62,6 +62,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         } else if !ready {
             showSettings(.overview)
         }
+        engine.recoverAtLaunch()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        engine.prepareForQuit()
     }
 
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
@@ -141,6 +146,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(shortcuts)
         menu.addItem(.separator())
 
+        if engine.state == .idle { addRecovery(to: menu) }
+
         let today = UsageStore.shared.summary.today
         let stats = NSMenuItem(title: today.uses == 0 ? "Nothing dictated today"
                                : "Today: \(Format.count(today.characters)) characters · \(Format.minutes(today.minutesSaved)) saved",
@@ -166,6 +173,88 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     }
 
     @objc private func cancelFromMenu() { engine.cancel() }
+
+    // MARK: Recovery
+
+    /// Recordings whose words never all came back, and the last transcript
+    /// as Doubao heard it, before the model changed it.
+    private func addRecovery(to menu: NSMenu) {
+        let saved = engine.recordings.all()
+        if !saved.isEmpty {
+            let header = NSMenuItem(title: saved.count == 1 ? "Not transcribed yet" : "\(saved.count) recordings not transcribed yet",
+                                    action: nil, keyEquivalent: "")
+            header.isEnabled = false
+            menu.addItem(header)
+            for r in saved.prefix(5) {
+                let item = NSMenuItem(title: "Transcribe Again · \(Self.describe(r))", action: #selector(transcribeAgain(_:)),
+                                      keyEquivalent: "")
+                item.target = self
+                item.representedObject = r.id
+                item.image = NSImage(systemSymbolName: r.translate ? "translate" : "arrow.clockwise", accessibilityDescription: nil)
+                item.toolTip = "Transcribes it again\(r.translate ? ", translates it" : "") and inserts the text where you're typing"
+                menu.addItem(item)
+            }
+            let delete = NSMenuItem(title: saved.count == 1 ? "Delete Saved Recording…" : "Delete Saved Recordings…",
+                                    action: #selector(deleteRecordings), keyEquivalent: "")
+            delete.target = self
+            menu.addItem(delete)
+            menu.addItem(.separator())
+        }
+        if engine.lastResult != nil || engine.lastHeard != nil {
+            if engine.lastResult != nil {
+                let copy = NSMenuItem(title: "Copy Last Result", action: #selector(copyLastResult), keyEquivalent: "")
+                copy.target = self
+                copy.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil)
+                copy.toolTip = "The text Murmur last inserted"
+                menu.addItem(copy)
+            }
+            if let heard = engine.lastHeard, heard != engine.lastResult {
+                let copy = NSMenuItem(title: "Copy Last Transcript, as Heard", action: #selector(copyLastHeard), keyEquivalent: "")
+                copy.target = self
+                copy.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: nil)
+                copy.toolTip = "What Doubao heard in the last dictation, before polishing or translating"
+                menu.addItem(copy)
+            }
+            menu.addItem(.separator())
+        }
+    }
+
+    private static func describe(_ r: RecordingStore.Recording) -> String {
+        "\(DictationEngine.duration(r.seconds)), \(Format.day(r.date)) \(r.date.formatted(date: .omitted, time: .shortened))"
+    }
+
+    @objc private func transcribeAgain(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let recording = engine.recordings.all().first(where: { $0.id == id }) else { return }
+        // Let the menu close and the previous app regain focus first.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { DictationEngine.shared.transcribeAgain(recording) }
+    }
+
+    @objc private func deleteRecordings() {
+        let saved = engine.recordings.all()
+        guard !saved.isEmpty else { return }
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = saved.count == 1 ? "Delete the saved recording?" : "Delete \(saved.count) saved recordings?"
+        alert.informativeText = "What was said in \(saved.count == 1 ? "it" : "them") can't be transcribed after this."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn, engine.state == .idle else { return }
+        saved.forEach { engine.recordings.delete($0.id) }
+    }
+
+    @objc private func copyLastResult() {
+        guard let text = engine.lastResult else { return }
+        Clipboard.put(text)
+        engine.hud.finish(.done("Copied"))
+    }
+
+    @objc private func copyLastHeard() {
+        guard let text = engine.lastHeard else { return }
+        Clipboard.put(text)
+        engine.hud.finish(.done("Transcript copied"))
+    }
 
     @objc private func openOverview() { showSettings(.overview) }
 }

@@ -7,7 +7,8 @@ import MurmurCore
 final class HUDModel {
     enum Mode: Equatable {
         case listening
-        /// Waiting for Doubao's complete text; `retry` counts replays.
+        /// Waiting for Doubao's complete text; `retry` counts connections
+        /// in a row that failed.
         case transcribing(retry: Int)
         /// The model is at work: polishing a dictation, refining a
         /// selection, or translating either.
@@ -21,6 +22,15 @@ final class HUDModel {
         case polish, refine
         /// Into the named language.
         case translate(String)
+    }
+
+    /// The stream to Doubao, as shown while listening.
+    enum Link: Equatable {
+        case live
+        /// Dropped; a new connection is on its way. Speaking can go on.
+        case reconnecting
+        /// Doubao refused; the recording goes on, to transcribe later.
+        case recordingOnly
     }
 
     struct Notice: Equatable {
@@ -41,6 +51,7 @@ final class HUDModel {
     var startedAt = Date()
     /// The language a translating session will end in; nil when it won't translate.
     var target: String?
+    var link = Link.live
     /// Bumped to shake the capsule ("busy", errors).
     var shakes = 0
 
@@ -55,6 +66,7 @@ final class HUDModel {
         liveText = ""
         preview = ""
         target = nil
+        link = .live
         level = 0
         startedAt = Date()
     }
@@ -93,7 +105,7 @@ final class HUDModel {
         switch mode {
         case .done: hold = 1.1
         case .cancelled: hold = 0.45
-        case .notice(let n): hold = n.detail == nil ? 2.2 : 4.2
+        case .notice(let n): hold = n.detail == nil ? 2.2 : ((n.detail?.count ?? 0) > 64 ? 6 : 4.2)
         default: hold = 1.5
         }
         dismissal = Task { [weak self] in

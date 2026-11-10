@@ -281,7 +281,7 @@ struct TryIt: View {
         case .attempt(let n): status = n == 1 ? "Waiting for the model…" : "Attempt \(n)…"
         case .thinking: status = "Thinking…"
         case .text(let t): output = PolishPrompt.clean(t, input: input); status = "Writing…"
-        case .retrying(let next, let reason): status = "Retrying (\(next) of 3): \(reason)"
+        case .retrying(let next, let reason): status = "Retrying (\(next) of \(OpenRouterClient.maxAttempts)): \(reason)"
         }
     }
 

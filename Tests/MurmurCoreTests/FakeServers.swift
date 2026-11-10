@@ -100,6 +100,20 @@ final class FakeDoubaoServer: @unchecked Sendable {
     var neverFinish = false
     var finalText = "你好，世界。"
 
+    /// Recognise "sentences" from the audio itself: each second whose
+    /// samples hold the value v is heard as "第v句。", confirmed once the
+    /// second is complete. Resuming at the wrong place repeats or skips one.
+    var sentences = false
+    /// Connections (1-based) closed once they have received this much audio.
+    var dropAfterBytes: [Int: Int] = [:]
+    /// Connections (1-based) closed as soon as they ask to start.
+    var refuse: (Int) -> Bool = { _ in false }
+    /// From this connection on, the start request is answered with an error.
+    var refuseFrom: (connection: Int, code: UInt32, message: String)?
+    private var connections = 0
+    private var perConnection: [ObjectIdentifier: (index: Int, audio: Data)] = [:]
+    var connectionCount: Int { lock.withLock { connections } }
+
     var url: URL { URL(string: "ws://127.0.0.1:\(listener.port?.rawValue ?? 0)/api/v3/sauc/bigmodel_async")! }
 
     init() throws {
@@ -119,6 +133,10 @@ final class FakeDoubaoServer: @unchecked Sendable {
         listener.stateUpdateHandler = { if case .ready = $0 { ready.signal() } }
         listener.newConnectionHandler = { [weak self] conn in
             guard let self else { return }
+            self.lock.withLock {
+                self.connections += 1
+                self.perConnection[ObjectIdentifier(conn)] = (self.connections, Data())
+            }
             conn.start(queue: self.queue)
             self.receive(conn)
         }
@@ -141,6 +159,8 @@ final class FakeDoubaoServer: @unchecked Sendable {
     }
 
     private func handle(_ frame: DoubaoFrame, _ conn: NWConnection) {
+        let index = lock.withLock { perConnection[ObjectIdentifier(conn)]?.index ?? 0 }
+        if sentences { return handleSentences(frame, conn, index) }
         switch frame.kind {
         case .fullClientRequest:
             if let refuse = refuseWith {
@@ -160,6 +180,49 @@ final class FakeDoubaoServer: @unchecked Sendable {
         default:
             break
         }
+    }
+
+    private func handleSentences(_ frame: DoubaoFrame, _ conn: NWConnection, _ index: Int) {
+        switch frame.kind {
+        case .fullClientRequest:
+            if refuse(index) { conn.cancel(); return }
+            if let r = refuseFrom, index >= r.connection {
+                send(DoubaoFrame(kind: .serverError, serialization: .json, errorCode: r.code,
+                                 payload: Data("{\"message\":\"\(r.message)\"}".utf8)), conn)
+                return
+            }
+            send(response(text: "", seq: 1, last: false), conn)
+        case .audioOnlyRequest:
+            let audio: Data = lock.withLock {
+                audioBytes += frame.payload.count
+                perConnection[ObjectIdentifier(conn)]?.audio.append(frame.payload)
+                return perConnection[ObjectIdentifier(conn)]?.audio ?? Data()
+            }
+            if let limit = dropAfterBytes[index], audio.count >= limit { conn.cancel(); return }
+            send(sentenceResponse(audio, seq: frame.sequence, last: frame.isLast), conn)
+        default:
+            break
+        }
+    }
+
+    /// Whole seconds are confirmed sentences; a part of one is still in progress.
+    private func sentenceResponse(_ audio: Data, seq: Int32, last: Bool) -> DoubaoFrame {
+        let second = 32_000
+        var utterances: [[String: Any]] = []
+        var start = 0
+        while start < audio.count {
+            let end = min(audio.count, start + second)
+            let value = audio.withUnsafeBytes { $0.loadUnaligned(fromByteOffset: start, as: Int16.self) }
+            let whole = end - start == second
+            utterances.append(["text": whole || last ? "第\(value)句。" : "第\(value)",
+                               "start_time": start / 32, "end_time": end / 32, "definite": whole || last])
+            start = end
+        }
+        let text = utterances.map { $0["text"] as! String }.joined()
+        let body: [String: Any] = ["audio_info": ["duration": audio.count / 32], "result": ["text": text, "utterances": utterances]]
+        let json = (try? JSONSerialization.data(withJSONObject: body)) ?? Data()
+        return DoubaoFrame(kind: .fullServerResponse, flags: last ? [.sequence, .last] : .sequence, serialization: .json,
+                           compression: .gzip, sequence: last ? -abs(seq) : seq, payload: json)
     }
 
     private func response(text: String, seq: Int32, last: Bool) -> DoubaoFrame {

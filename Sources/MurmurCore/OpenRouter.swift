@@ -14,9 +14,12 @@ public struct OpenRouterModel: Codable, Hashable, Identifiable, Sendable {
     public var supportsReasoning: Bool
     public var reasoningMandatory: Bool
     public var efforts: [String]
+    /// The most the model writes in one answer; nil when unknown.
+    public var maxOutput: Int?
 
     public init(id: String, name: String, inputPrice: Double = 0, outputPrice: Double = 0, contextLength: Int = 0,
-                created: Double = 0, supportsReasoning: Bool = false, reasoningMandatory: Bool = false, efforts: [String] = []) {
+                created: Double = 0, supportsReasoning: Bool = false, reasoningMandatory: Bool = false, efforts: [String] = [],
+                maxOutput: Int? = nil) {
         self.id = id
         self.name = name
         self.inputPrice = inputPrice
@@ -26,6 +29,7 @@ public struct OpenRouterModel: Codable, Hashable, Identifiable, Sendable {
         self.supportsReasoning = supportsReasoning
         self.reasoningMandatory = reasoningMandatory
         self.efforts = efforts
+        self.maxOutput = maxOutput
     }
 
     /// The vendor part of the id, for grouping ("google", "anthropic").
@@ -51,6 +55,7 @@ public struct OpenRouterModel: Codable, Hashable, Identifiable, Sendable {
             let pricing = m["pricing"] as? [String: Any]
             let params = m["supported_parameters"] as? [String] ?? []
             let reasoning = m["reasoning"] as? [String: Any]
+            let top = m["top_provider"] as? [String: Any]
             return OpenRouterModel(
                 id: id,
                 name: (m["name"] as? String) ?? id,
@@ -60,7 +65,8 @@ public struct OpenRouterModel: Codable, Hashable, Identifiable, Sendable {
                 created: (m["created"] as? NSNumber)?.doubleValue ?? 0,
                 supportsReasoning: reasoning != nil || params.contains("reasoning"),
                 reasoningMandatory: (reasoning?["mandatory"] as? Bool) ?? false,
-                efforts: reasoning?["supported_efforts"] as? [String] ?? []
+                efforts: reasoning?["supported_efforts"] as? [String] ?? [],
+                maxOutput: (top?["max_completion_tokens"] as? NSNumber)?.intValue
             )
         }
     }
@@ -234,6 +240,8 @@ public struct OpenRouterKeyInfo: Sendable, Equatable {
 
 public final class OpenRouterClient: Sendable {
     public static let defaultBase = URL(string: "https://openrouter.ai/api/v1")!
+    /// Requests per polish or translation, the first included.
+    public static let maxAttempts = 5
 
     /// Reads an endpoint as people paste it: trims it, drops a trailing
     /// slash or a full `/chat/completions` path, and wants http(s) and a host.
@@ -271,15 +279,19 @@ public final class OpenRouterClient: Sendable {
     }()
 
     public struct Tuning: Sendable {
-        /// Attempts in all (network errors, overloaded providers, broken streams).
-        public var attempts = 3
+        /// Attempts in all: the first request and up to four more, after
+        /// network errors, overloaded or failing providers, rate limits,
+        /// stalled or broken streams and empty answers. Errors no new request
+        /// can fix (a wrong key, no credits, an unknown model) end at once,
+        /// so the caller's fallback isn't kept waiting.
+        public var attempts = OpenRouterClient.maxAttempts
         /// No byte at all (keep-alives count) for this long: the request is stuck.
         public var idleTimeout: TimeInterval = 20
         /// The longest the whole polish may take, retries included. After it,
         /// the caller falls back to the text it had.
         public var timeout: TimeInterval = OpenRouterClient.defaultTimeout
-        /// Waits between attempts.
-        public var backoff: [TimeInterval] = [0.5, 1.5, 3]
+        /// Waits between attempts, before Retry-After and jitter.
+        public var backoff: [TimeInterval] = [0.5, 1.5, 3, 5]
         public init() {}
     }
 
@@ -373,7 +385,10 @@ public final class OpenRouterClient: Sendable {
         let chars = input.count
         var reasoning = extras ? ReasoningSetting.least(for: info) : .omit
         let deadline = Date().addingTimeInterval(tuning.timeout)
-        let maxTokens = min(32_000, max(2_048, chars * 4 + 2_048))
+        // Room for the whole text, but never more than the model will write:
+        // asking for more is refused outright by some providers.
+        var maxTokens = min(32_000, max(2_048, chars * 4 + 2_048))
+        if let cap = info?.maxOutput, cap > 0 { maxTokens = min(maxTokens, cap) }
 
         var attempt = 0
         var freeRetryUsed = false
@@ -587,8 +602,13 @@ public struct SSEChunkParser: Sendable {
         if !sawDone, finishReason == nil {
             throw PolishFailure(.truncated, "The answer was cut off.", retryable: true)
         }
-        if finishReason == "length", content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
-            throw PolishFailure(.truncated, "The model used its whole budget thinking.", retryable: true)
+        if finishReason == "length" {
+            if content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+                throw PolishFailure(.truncated, "The model used its whole budget thinking.", retryable: true)
+            }
+            // A cut-off answer would drop the end of what was said, and the
+            // same request would be cut off again.
+            throw PolishFailure(.truncated, "The answer was longer than the model will write at once.")
         }
     }
 }

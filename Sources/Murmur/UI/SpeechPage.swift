@@ -40,7 +40,7 @@ struct SpeechPage: View {
             }
         }
 
-        PageSection(title: "Model") {
+        PageSection(title: "Billing") {
             Card(padding: 6) {
                 ForEach(Array(DoubaoAPI.resources.enumerated()), id: \.element.id) { index, resource in
                     if index > 0 { RowDivider().padding(.vertical, -6).padding(.leading, 40) }
@@ -49,7 +49,7 @@ struct SpeechPage: View {
                     }
                 }
             }
-            Text("Use the one you opened in the console. 2.0 recognises more accurately and adds a second pass over each sentence.")
+            Text("Murmur uses Doubao ASR 2.0, which makes a second, more accurate pass over each sentence. Pick the billing you opened in the console.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .padding(.horizontal, 4)
@@ -118,10 +118,7 @@ private struct ResourceRow: View {
                 .frame(width: 16, height: 16)
                 .padding(.leading, 6)
                 VStack(alignment: .leading, spacing: 1) {
-                    HStack(spacing: 6) {
-                        Text(resource.title).font(.system(size: 13, weight: .medium))
-                        if resource.id == DoubaoAPI.defaultResource { Badge(text: "Recommended", tint: Brand.coral) }
-                    }
+                    Text(resource.title).font(.system(size: 13, weight: .medium))
                     Text(resource.detail + " · " + resource.id)
                         .font(.system(size: 11))
                         .foregroundStyle(.secondary)

@@ -148,45 +148,45 @@ extension Data {
 // MARK: - Requests and results
 
 public enum DoubaoAPI {
-    /// The optimised duplex stream: partial text only when it changes, and
-    /// a second, more accurate pass over each finished sentence.
-    public static let asyncEndpoint = URL(string: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async")!
-    /// The original duplex stream, for the 1.0 models.
-    public static let duplexEndpoint = URL(string: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel")!
+    /// Doubao ASR 2.0's optimised duplex stream: partial text only when it
+    /// changes, and a second, more accurate pass over each finished sentence.
+    public static let endpoint = URL(string: "wss://openspeech.bytedance.com/api/v3/sauc/bigmodel_async")!
 
     public static let sampleRate = 16_000
     /// 200 ms of 16 kHz, 16-bit mono PCM: the packet size the service prefers.
     public static let packetBytes = 6_400
 
+    /// Doubao ASR 2.0, as the console sells it: by duration or by concurrency.
     public struct Resource: Identifiable, Hashable, Sendable {
         public let id: String
         public let title: String
         public let detail: String
-        public var isV1: Bool { id.hasPrefix("volc.bigasr") }
     }
 
     public static let resources: [Resource] = [
-        Resource(id: "volc.seedasr.sauc.duration", title: "Doubao ASR 2.0", detail: "Billed by duration"),
-        Resource(id: "volc.seedasr.sauc.concurrent", title: "Doubao ASR 2.0", detail: "Billed by concurrency"),
-        Resource(id: "volc.bigasr.sauc.duration", title: "Doubao ASR 1.0", detail: "Billed by duration"),
-        Resource(id: "volc.bigasr.sauc.concurrent", title: "Doubao ASR 1.0", detail: "Billed by concurrency"),
+        Resource(id: "volc.seedasr.sauc.duration", title: "Billed by duration", detail: "Pay for the time you speak"),
+        Resource(id: "volc.seedasr.sauc.concurrent", title: "Billed by concurrency", detail: "Pay for streams open at once"),
     ]
     public static let defaultResource = resources[0].id
 
-    public static func endpoint(for resource: String) -> URL {
-        resource.hasPrefix("volc.bigasr") ? duplexEndpoint : asyncEndpoint
+    /// A saved resource, made current: Doubao ASR 1.0 ids (`volc.bigasr…`),
+    /// saved by earlier versions, become the 2.0 resource billed the same way.
+    public static func current(_ resource: String) -> String {
+        let id = resource.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard id.hasPrefix("volc.bigasr.") else { return id }
+        return id.hasSuffix(".concurrent") ? "volc.seedasr.sauc.concurrent" : defaultResource
     }
 
-    /// The full client request that opens a stream.
-    public static func startRequest(secondPass: Bool) -> Data {
-        var request: [String: Any] = [
+    /// The full client request that opens a stream, with the second pass on.
+    public static func startRequest() -> Data {
+        let request: [String: Any] = [
             "model_name": "bigmodel",
             "enable_itn": true,
             "enable_punc": true,
             "enable_ddc": true,
+            "enable_nonstream": true,
             "show_utterances": true,
         ]
-        if secondPass { request["enable_nonstream"] = true }
         let body: [String: Any] = [
             "user": ["uid": "murmur"],
             "audio": ["format": "pcm", "codec": "raw", "rate": sampleRate, "bits": 16, "channel": 1],
@@ -195,12 +195,50 @@ public enum DoubaoAPI {
         return (try? JSONSerialization.data(withJSONObject: body, options: [.sortedKeys])) ?? Data()
     }
 
+    /// One sentence as Doubao heard it. A definite one has had its final
+    /// (second) pass and won't change; times count from the stream's start.
+    public struct Utterance: Equatable, Sendable {
+        public var text: String
+        public var startMS: Int
+        public var endMS: Int
+        public var definite: Bool
+
+        public init(text: String, startMS: Int, endMS: Int, definite: Bool) {
+            self.text = text
+            self.startMS = startMS
+            self.endMS = endMS
+            self.definite = definite
+        }
+    }
+
     public struct Result: Equatable, Sendable {
         public var text: String
         public var durationMS: Int
+        public var utterances: [Utterance]
+
+        public init(text: String, durationMS: Int, utterances: [Utterance] = []) {
+            self.text = text
+            self.durationMS = durationMS
+            self.utterances = utterances
+        }
+
+        /// The sentences that won't change, from the start of the stream:
+        /// their text, and where in the audio they end.
+        public var confirmed: (text: String, endMS: Int) {
+            let done = utterances.prefix { $0.definite }
+            return (Transcript.join(done.map(\.text)), done.last?.endMS ?? 0)
+        }
+
+        /// What follows the confirmed sentences: still being recognised.
+        public var unconfirmedText: String {
+            if utterances.isEmpty { return text }
+            let done = utterances.prefix { $0.definite }.count
+            return Transcript.join(utterances.dropFirst(done).map(\.text))
+        }
     }
 
-    /// Reads a full server response: the whole text so far, and the audio's length.
+    /// Reads a full server response: the whole text so far, its sentences,
+    /// and the audio's length.
     public static func parse(_ payload: Data) -> Result? {
         guard !payload.isEmpty,
               let obj = try? JSONSerialization.jsonObject(with: payload) as? [String: Any] else { return nil }
@@ -211,15 +249,24 @@ public enum DoubaoAPI {
         if let many = obj["result"] as? [[String: Any]] { results = many }
 
         var text = ""
+        var sentences: [Utterance] = []
         for r in results {
+            let utterances = (r["utterances"] as? [[String: Any]]) ?? []
+            for u in utterances {
+                sentences.append(Utterance(
+                    text: (u["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? "",
+                    startMS: (u["start_time"] as? NSNumber)?.intValue ?? 0,
+                    endMS: (u["end_time"] as? NSNumber)?.intValue ?? 0,
+                    definite: (u["definite"] as? Bool) ?? false))
+            }
             var t = (r["text"] as? String)?.trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
-            if t.isEmpty, let utterances = r["utterances"] as? [[String: Any]] {
+            if t.isEmpty, !utterances.isEmpty {
                 t = utterances.compactMap { $0["text"] as? String }.joined()
                     .trimmingCharacters(in: .whitespacesAndNewlines)
             }
             text += t
         }
-        return Result(text: text, durationMS: duration)
+        return Result(text: text, durationMS: duration, utterances: sentences)
     }
 }
 

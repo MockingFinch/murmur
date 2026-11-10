@@ -27,7 +27,6 @@ public struct DoubaoCredentials: Sendable, Equatable {
 /// runs on its own and reports partial text through `onPartial`.
 public final class DoubaoSession: @unchecked Sendable {
     private let task: URLSessionWebSocketTask
-    private let secondPass: Bool
     private let onPartial: @Sendable (String) -> Void
 
     private let lock = NSLock()
@@ -35,6 +34,7 @@ public final class DoubaoSession: @unchecked Sendable {
     private var pending = Data()
     private var text = ""
     private var durationMS = 0
+    private var utterances: [DoubaoAPI.Utterance] = []
     private var outcome: Result<DoubaoAPI.Result, SpeechError>?
     private var waiters: [CheckedContinuation<DoubaoAPI.Result, Error>] = []
     private var reader: Task<Void, Never>?
@@ -43,7 +43,7 @@ public final class DoubaoSession: @unchecked Sendable {
     public init(credentials: DoubaoCredentials,
                 urlSession: URLSession = DoubaoSession.defaultURLSession,
                 onPartial: @escaping @Sendable (String) -> Void = { _ in }) {
-        let url = credentials.endpoint ?? DoubaoAPI.endpoint(for: credentials.resource)
+        let url = credentials.endpoint ?? DoubaoAPI.endpoint
         var request = URLRequest(url: url)
         if credentials.appID.isEmpty {
             request.setValue(credentials.token, forHTTPHeaderField: "X-Api-Key")
@@ -59,7 +59,6 @@ public final class DoubaoSession: @unchecked Sendable {
 
         task = urlSession.webSocketTask(with: request)
         task.maximumMessageSize = 4 << 20
-        secondPass = !credentials.resource.hasPrefix("volc.bigasr")
         self.onPartial = onPartial
     }
 
@@ -73,6 +72,12 @@ public final class DoubaoSession: @unchecked Sendable {
     /// The text recognised so far.
     public var latestText: String { lock.withLock { text } }
 
+    /// Everything recognised so far, sentence by sentence: what survives if
+    /// the connection is lost.
+    public var latest: DoubaoAPI.Result {
+        lock.withLock { DoubaoAPI.Result(text: text, durationMS: durationMS, utterances: utterances) }
+    }
+
     /// Seconds of audio sent so far.
     public var secondsSent: Double { lock.withLock { Double(pcmSent) / Double(DoubaoAPI.sampleRate * 2) } }
 
@@ -84,7 +89,7 @@ public final class DoubaoSession: @unchecked Sendable {
         task.resume()
         let start = DoubaoFrame(kind: .fullClientRequest, flags: .sequence, serialization: .json,
                                 compression: .gzip, sequence: 1,
-                                payload: DoubaoAPI.startRequest(secondPass: secondPass))
+                                payload: DoubaoAPI.startRequest())
         let bytes = try DoubaoCodec.encode(start)
         let timedOut = Flag()
         do {
@@ -178,7 +183,7 @@ public final class DoubaoSession: @unchecked Sendable {
             do {
                 let message = try await task.receive()
                 if try handle(message) {
-                    let result = lock.withLock { DoubaoAPI.Result(text: text, durationMS: durationMS) }
+                    let result = lock.withLock { DoubaoAPI.Result(text: text, durationMS: durationMS, utterances: utterances) }
                     complete(.success(result))
                     task.cancel(with: .normalClosure, reason: nil)
                     return
@@ -209,6 +214,7 @@ public final class DoubaoSession: @unchecked Sendable {
                 var changed: String?
                 lock.withLock {
                     if r.durationMS > 0 { durationMS = r.durationMS }
+                    if !r.utterances.isEmpty { utterances = r.utterances }
                     // An empty answer keeps the text: the last answer may come without it.
                     if !r.text.isEmpty, r.text != text {
                         text = r.text

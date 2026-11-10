@@ -2,26 +2,6 @@ import AVFoundation
 import Foundation
 import MurmurCore
 
-/// Everything recorded in a session, as 16 kHz 16-bit mono PCM. The live
-/// stream reads from it as it grows; a retry replays all of it.
-final class PCMTape: @unchecked Sendable {
-    private let lock = NSLock()
-    private var data = Data()
-
-    func append(_ chunk: Data) { lock.withLock { data.append(chunk) } }
-    var count: Int { lock.withLock { data.count } }
-    var all: Data { lock.withLock { data } }
-    var seconds: Double { Double(count) / Double(DoubaoAPI.sampleRate * 2) }
-
-    func slice(from start: Int, to end: Int) -> Data {
-        lock.withLock {
-            let s = max(0, min(start, data.count))
-            let e = max(s, min(end, data.count))
-            return data.subdata(in: s ..< e)
-        }
-    }
-}
-
 enum CaptureError: LocalizedError {
     case noInput, converter
 
@@ -38,6 +18,9 @@ final class AudioCapture: @unchecked Sendable {
     let tape = PCMTape()
     /// Loudness, 0...1, about every 20 ms; called on the main queue.
     var onLevels: (@Sendable ([Float]) -> Void)?
+    /// The microphone went away and no other could take over; called on
+    /// the main queue. What was recorded until then is on the tape.
+    var onLost: (@Sendable () -> Void)?
 
     private var engine: AVAudioEngine?
     private var configObserver: NSObjectProtocol?
@@ -82,6 +65,7 @@ final class AudioCapture: @unchecked Sendable {
             try engine.start()
         } catch {
             NSLog("Murmur: could not restart the microphone: \(error)")
+            onLost?()
         }
     }
 

@@ -19,7 +19,7 @@ With text selected, the same shortcut skips the microphone and rewrites the sele
 
 ## Setup
 
-- **Speech:** paste your Doubao key from the [Volcengine console](https://console.volcengine.com/speech/app). Use *API Key* for the new console or *App ID + Token* for the classic one. Pick the model you opened (Doubao ASR 2.0 by default), then click **Test Connection**.
+- **Speech:** paste your Doubao key from the [Volcengine console](https://console.volcengine.com/speech/app). Use *API Key* for the new console or *App ID + Token* for the classic one. Murmur uses Doubao ASR 2.0: pick the billing you opened (by duration or by concurrency), then click **Test Connection**.
 - **Polish** (optional): enter a model API's endpoint, its key and the model's name. Any OpenAI-compatible API works: OpenRouter (the default), OpenAI, DeepSeek, or a model running on this Mac (no key needed). Click **Test**, then adjust the prompt if you like. **Try it** runs a real request on a sample.
 - **Translate** (optional): pick the language to translate into, and adjust the translation prompt if you like. It uses the model from Polish, so there is nothing else to set up. Its shortcut, ⌃⌘X by default, is changed here too.
 - **Shortcut:** allow the Microphone and Accessibility. Accessibility lets Murmur read a selection and paste the result; on macOS 27, System Settings lists it under Privacy & Security as **Device Control and Data Access**. You can change ⌃X to another shortcut here.
@@ -39,15 +39,24 @@ With text selected, the same shortcut skips the microphone and rewrites the sele
 - **Select text, then ⌃X:** the selection is rewritten with your prompt and replaced. If the selection changed in the meantime, the result goes to the clipboard instead.
 - **⌃⌘X** works the same way, with one more step: after polishing, the text is translated, and the translation goes in. While you speak, the capsule shows the language it will go in as. With text selected, ⌃⌘X translates the selection and replaces it.
 - The shortcut that starts a session decides whether it translates; either shortcut ends it. If polishing fails, the transcript goes in as heard rather than waiting on a second request. If translating fails, the polished text goes in.
+- Dictations stop at 15 minutes; the timer turns amber in the last minute. What you said goes in as usual.
+- The menu bar menu keeps the last result and the last transcript as Doubao heard it, before polishing, in case the clipboard has moved on. If a recording couldn't be transcribed in full, it's listed there too, with **Transcribe Again**.
 
 ## Reliability
 
-- **Nothing you say is lost to the network.** The recording is kept while it streams. If the stream to Doubao breaks, Murmur replays the recording, up to twice. If Doubao never confirms the final text, the latest text it sent goes in, and the capsule says the end may be missing.
+- **Nothing you say is lost to the network.**
+  - If the stream to Doubao drops while you speak, the capsule shows **Reconnecting**. Keep talking. Murmur keeps every sentence Doubao has confirmed, opens a new connection and sends only the audio after them, faster than real time until it catches up. Nothing is transcribed or billed twice.
+  - While you're speaking, it never gives up. Once you stop, it gives up after 5 tries in a row that get nothing back. What Doubao confirmed then goes in, along with the words still in progress, and the capsule says how much at the end is missing.
+  - If Doubao refuses partway (a key or quota problem), the capsule shows **Recording only**: recording goes on, and what was confirmed until then goes in.
+- **Every recording is on disk until its words are in.** It's written a moment behind the microphone, so a crash, a quit or a network that never comes back costs nothing. If the text came back incomplete, or not at all, the recording stays: choose **Transcribe Again** in the menu bar to run it through Doubao, polishing and translation again and insert the result. A recording that was cut off by a crash or a quit is offered at the next launch. Cancelling while you speak discards the recording; cancelling after you stop keeps it.
+- **A lost microphone ends the dictation, not the words.** If the microphone disappears and no other takes over, what you said until then goes in.
 - **Polishing has a deadline, not a hair trigger.**
   - One request carries the whole text. It gets up to 180 seconds, retries included (Polish → Timeout).
   - Keep-alives count as progress; only 20 seconds of total silence counts as a stall.
-  - Failed requests are retried up to 3 times, honoring `Retry-After`.
-  - If the model never answers, the transcript goes in as Doubao heard it.
+  - A failed request is sent again, up to 5 attempts in all, honoring `Retry-After`. Errors a new request can't fix (a wrong key, no credits, an unknown model) skip the wait.
+  - Translating works the same way, with its own 5 attempts.
+  - Your words are never dropped. If polishing still fails, the transcript goes in as Doubao heard it; if translating fails, the polished text goes in. Whatever goes in is also on the clipboard.
+  - An answer cut off at the model's length limit is never inserted, since it would drop the end of what you said. The full transcript goes in instead. When OpenRouter lists how much a model can write in one answer, Murmur never asks for more.
 - **Thinking is kept to a minimum.** On OpenRouter, Murmur asks each model for the least thinking it allows. Polishing gains nothing from it, and thinking by default can take a minute.
 - **The connection opens while you speak**, so the answer doesn't wait on DNS and TLS after you stop.
 
@@ -59,6 +68,8 @@ With text selected, the same shortcut skips the microphone and rewrites the sele
 | Settings | `UserDefaults` (`local.murmur.dictation`) |
 | Statistics | `~/Library/Application Support/Murmur/usage.json`: counts and timings only, never text |
 | Translation language and prompt | `UserDefaults`, with the other settings |
+| Recordings | `~/Library/Application Support/Murmur/Recordings`, readable only by your account. Each one is deleted as soon as its text is in. One that couldn't be transcribed in full is kept for 7 days at most, or until you delete it from the menu bar |
+| Last result and transcript | Memory only, for the menu bar's Copy items; gone when Murmur quits |
 
 Audio goes only to Doubao. Text goes only to the model API you set up. Updates and rebuilds keep all of the above.
 
