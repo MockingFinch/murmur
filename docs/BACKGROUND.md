@@ -84,4 +84,6 @@ Murmur grew out of work in Chinese and English, and its examples show that, but 
 
 **1.2: never lose a word.** The release about the failure that hurts most: a connection that drops in the middle of a long dictation. Murmur now reconnects while you speak, keeps everything already recognized and catches up on the rest. Every recording is written to disk as you speak and kept until its words are in, with **Transcribe Again** in the menu bar and recovery after a crash or quit. Model requests retry patiently, an answer the model cut short is never inserted, and the last result and transcript stay available from the menu bar.
 
+**1.3: no bill for a forgotten dictation.** A shortcut pressed by accident, or a dictation left running, used to keep recognition running, and billing, until the 15-minute limit. Now, once Doubao has heard nothing new for 2 minutes, Murmur stops listening and carries on with whatever was said. The time is yours to set, and time spent reconnecting doesn't count.
+
 Through every version, the aim has stayed the same: speaking should be the fastest way to write, and it should be safe to rely on.
