@@ -126,6 +126,7 @@ What Murmur does when something goes wrong, in detail. The rule behind all of it
 
 **The model**
 
+- A local formatting check removes a `~~` wrapper from the entire result before insertion or copying. It runs on speech recognition output and on final model responses from polishing and translation.
 - One request carries the whole text. It gets up to 180 seconds, retries included (Polish → Timeout).
 - Keep-alives count as progress. Only 20 seconds of total silence counts as a stall.
 - A failed request is sent again, up to 5 attempts in all, honoring `Retry-After`. Errors a new request can't fix (a wrong key, no credits, an unknown model) skip the wait.

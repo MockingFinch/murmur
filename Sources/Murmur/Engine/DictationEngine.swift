@@ -336,7 +336,9 @@ final class DictationEngine {
 
     private func deliver(_ outcome: ResilientTranscriber.Outcome, _ stoppedAt: Date, _ id: Int,
                          _ reason: StopReason, again: Bool) async {
-        let raw = outcome.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        let raw = PolishPrompt.stripStrikethroughWrapper(
+            outcome.text.trimmingCharacters(in: .whitespacesAndNewlines)
+        )
         if raw.isEmpty {
             forgetSaved()
             end(.notice(.init(tone: .info, title: reason == .quiet ? "Stopped listening" : "No speech detected",

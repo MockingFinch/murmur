@@ -95,7 +95,8 @@ public enum PolishPrompt {
     }
 
     /// Cleans a model's answer: no reasoning blocks, echoed tags, code
-    /// fences or wrapping quotes that the input did not have.
+    /// fences or wrapping quotes that the input did not have, or a Markdown
+    /// strikethrough wrapper.
     public static func clean(_ output: String, input: String) -> String {
         var s = output
         for tag in ["think", "thinking", "reasoning"] {
@@ -133,7 +134,15 @@ public enum PolishPrompt {
                 s = String(s.dropFirst(open.count).dropLast(close.count)).trimmingCharacters(in: .whitespacesAndNewlines)
             }
         }
-        return s
+        return stripStrikethroughWrapper(s)
+    }
+
+    /// Removes exactly two tildes from each end of the output.
+    public static func stripStrikethroughWrapper(_ text: String) -> String {
+        guard text.hasPrefix("~~"), text.hasSuffix("~~"), text.count > 4 else { return text }
+        let body = text.dropFirst(2).dropLast(2)
+        guard body.first != "~", body.last != "~" else { return text }
+        return body.trimmingCharacters(in: .whitespacesAndNewlines)
     }
 }
 
