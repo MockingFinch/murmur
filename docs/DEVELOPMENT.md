@@ -121,7 +121,7 @@ What Murmur does when something goes wrong, in detail. The rule behind all of it
 - Each dictation is written to `~/Library/Application Support/Murmur/Recordings` a moment behind the microphone (folder `0700`, files `0600`), and deleted once its text is in.
 - If the text came back incomplete, or not at all, the recording stays, for **Transcribe Again** in the menu bar: it runs the recording through Doubao, polishing and translation again and inserts the result.
 - A recording cut off by a crash or a quit is offered at the next launch.
-- Cancelling while speaking discards the recording. Cancelling after stopping keeps it.
+- Pressing Esc while Murmur is listening cancels the session and discards the recording. Murmur registers Esc as a global hotkey only while listening, including during reconnection. The menu bar's **Cancel** also works after stopping and keeps the recording in that case.
 - Recordings are kept for 7 days at most. Ones shorter than 0.3 seconds are discarded.
 
 **The model**

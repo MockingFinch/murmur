@@ -7,7 +7,7 @@ import MurmurCore
 /// front never sees it.
 @MainActor
 final class Hotkeys {
-    enum ID: UInt32 { case toggle = 1, translate = 2 }
+    enum ID: UInt32 { case toggle = 1, translate = 2, cancel = 3 }
 
     static let shared = Hotkeys()
 

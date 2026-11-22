@@ -1,4 +1,5 @@
 import AppKit
+import Carbon.HIToolbox
 import MurmurCore
 import SwiftUI
 
@@ -99,6 +100,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func reflect(_ state: DictationEngine.State) {
         statusItem?.button?.image = StatusIcon.image(active: state == .listening)
+
+        // Reserve Escape only while the recording can still be discarded.
+        if state == .listening {
+            Hotkeys.shared.register(.cancel, Shortcut(keyCode: UInt32(kVK_Escape), modifiers: 0)) { [weak self] in
+                guard let self, self.engine.state == .listening else { return }
+                self.engine.cancel()
+            }
+        } else {
+            Hotkeys.shared.unregister(.cancel)
+        }
     }
 
     func menuNeedsUpdate(_ menu: NSMenu) {

@@ -121,7 +121,7 @@ Murmur counts what you've written, how often you used it and how many minutes yo
   <img src="docs/media/capsule.webp" width="100%" alt="The capsule in six states: listening with live words, listening for translation with an English badge, polishing, translating, reconnecting while still recording, and done.">
 </p>
 
-While you work, Murmur is a small capsule at the bottom of the screen. It shows your words as you say them and what's happening after you stop, then tells you when the text is in. It never takes the focus away from the app you're typing in, and <kbd>Esc</kbd> stays yours: it keeps working in your app as usual.
+While you work, Murmur is a small capsule at the bottom of the screen. It shows your words as you say them and what's happening after you stop, then tells you when the text is in. It never takes the focus away from the app you're typing in. When Murmur is listening, press <kbd>Esc</kbd> to discard the recording and start over. Outside a recording, <kbd>Esc</kbd> works as usual in the front app.
 
 <br>
 
@@ -177,7 +177,7 @@ Then press <kbd>⌃</kbd> <kbd>X</kbd> anywhere and say something.
 | <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> | Dictate, polish, translate, insert | Translate the selection |
 
 - Either shortcut ends a dictation. The one you started with decides whether it's translated.
-- To cancel, choose **Cancel** from the menu bar icon.
+- Press <kbd>Esc</kbd> while recording to discard it. To cancel after you stop speaking, choose **Cancel** from the menu bar icon.
 - Both shortcuts can be changed: <kbd>⌃</kbd> <kbd>X</kbd> on the Shortcut page, <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> on the Translate page.
 - A dictation can run for up to 15 minutes. The timer turns amber in the last minute, and what you said goes in as usual.
 - **Forgot it was listening?** When Doubao hears no new words for 2 minutes, Murmur stops by itself and carries on with what you said, so a shortcut pressed by accident never runs up your bill. Set your own time on the Speech page.

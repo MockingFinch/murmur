@@ -20,7 +20,7 @@ struct ShortcutPage: View {
         PageSection(title: "Permissions") {
             Card {
                 PermissionRow(symbol: "mic.fill", title: "Microphone",
-                              detail: "To hear you while you dictate. Murmur records only between your two presses.",
+                              detail: "To hear you while you dictate.",
                               granted: readiness.micReady,
                               actionTitle: readiness.microphone == .notDetermined ? "Allow" : "Open Settings") {
                     if readiness.microphone == .notDetermined {
@@ -146,6 +146,7 @@ struct ShortcutRecorder: View {
                     Hint(caps: hotkey.shortcut.caps, text: "start · stop and translate")
                     Hint(symbol: "text.cursor", text: "select text first to translate it")
                 }
+                Hint(caps: ["Esc"], text: "cancel recording")
             }
             .padding(.top, 2)
         }

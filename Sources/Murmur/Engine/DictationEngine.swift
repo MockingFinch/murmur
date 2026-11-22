@@ -15,7 +15,7 @@ enum Page: String, CaseIterable, Identifiable, Hashable {
 ///                   └─ otherwise → the same dictation, then polish → translate → insert
 ///
 ///   The shortcut that starts a session decides what it is; either one ends
-///   it. Esc is left to the app in front. (The menu bar item can cancel.)
+///   it. Esc cancels and discards a recording while listening.
 ///
 ///   Nothing said is lost:
 ///   - to the network: the stream to Doubao reconnects as often as it
