@@ -11,6 +11,8 @@ struct SpeechPage: View {
         PageHeader(symbol: "waveform", gradient: Brand.voice, title: "Speech",
                    subtitle: "Doubao's streaming recognition, from Volcengine. Murmur waits for its final pass before anything is inserted.")
 
+        StageBreadcrumb(current: .speech)
+
         PageSection(title: "Credentials", trailing: AnyView(LinkLabel(title: "Volcengine console", url: "https://console.volcengine.com/speech/app"))) {
             Card {
                 SettingRow(title: "Console", detail: settings.doubaoAuth == .apiKey

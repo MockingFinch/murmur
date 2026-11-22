@@ -25,6 +25,8 @@ struct PolishPage: View {
         PageHeader(symbol: "sparkles", gradient: Brand.polish, title: "Polish",
                    subtitle: "A language model tidies what you said, or rewrites what you selected, following your prompt.")
 
+        StageBreadcrumb(current: .polish)
+
         PageSection(title: "Model API", trailing: settings.llmUsesOpenRouter
                     ? AnyView(LinkLabel(title: "OpenRouter keys", url: "https://openrouter.ai/keys"))
                     : nil) {
@@ -310,16 +312,24 @@ enum Price {
 // MARK: - Try it
 
 /// The real request, on a sample: the quickest way to see the prompt and
-/// the model work together.
+/// the model work together. On Translate, defaults to running the full
+/// two-stage LLM chain (Polish → Translate) so users watch each step transform
+/// messy speech in real time.
 struct TryIt: View {
     enum Job { case polish, translate }
+    private enum TranslateMode: Hashable { case chain, direct }
 
     let job: Job
     private let settings = AppSettings.shared
     @State private var input: String
     @State private var source: PolishPrompt.Source = .dictation
+    @State private var translateMode: TranslateMode = .chain
     @State private var userEdited = false
+    /// Intermediate polished text when running the full Polish → Translate chain.
+    @State private var polishedOutput = ""
+    @State private var polishDuration: Double?
     @State private var output = ""
+    @State private var translateDuration: Double?
     @State private var status: String?
     @State private var failed = false
     @State private var running: Task<Void, Never>?
@@ -330,8 +340,10 @@ struct TryIt: View {
         ("English", .dictation, "Um, so for next week, uh, let's meet on Tuesday, no sorry Wednesday at three to review the onboarding draft."),
         ("Selection", .selection, "so basically signups went down mostly because the new form is way too long and people just give up halfway"),
     ]
-    private static let chineseTranslateSample = "我觉得这个方案其实还可以，就是时间上可能有点紧。我们下周三之前能不能先出一个初版？"
-    private static let englishTranslateSample = "I think this plan looks solid overall, though the timeline is a bit tight. Could we get a first draft out by next Wednesday?"
+    private static let chineseChainSample = "嗯，那个，可以的，周二，不对，周四我有空，不过能不能把电话改到四点？呃，我三点半之前还有一个会。"
+    private static let englishChainSample = "Um, sure, I'm free on Tuesday, no sorry Thursday, could we maybe move the call to four? Uh, I have another meeting until three thirty."
+    private static let chineseDirectSample = "我觉得这个方案其实还可以，就是时间上可能有点紧。我们下周三之前能不能先出一个初版？"
+    private static let englishDirectSample = "I think this plan looks solid overall, though the timeline is a bit tight. Could we get a first draft out by next Wednesday?"
 
     init(job: Job) {
         self.job = job
@@ -340,19 +352,32 @@ struct TryIt: View {
             initial = Self.polishSamples[0].text
         } else {
             let lang = TranslatePrompt.language(AppSettings.shared.translateLanguage).lowercased()
-            initial = (lang.contains("chinese") || lang.contains("cantonese"))
-                ? Self.englishTranslateSample : Self.chineseTranslateSample
+            let intoChinese = lang.contains("chinese") || lang.contains("cantonese")
+            initial = intoChinese ? Self.englishChainSample : Self.chineseChainSample
         }
         _input = State(initialValue: initial)
     }
 
-    private var verb: String { job == .polish ? "Polish" : "Translate" }
+    private var verb: String {
+        if job == .polish { return "Polish" }
+        return translateMode == .chain ? "Run Chain" : "Translate"
+    }
+
     private var targetLanguage: String { TranslatePrompt.language(settings.translateLanguage) }
+
+    private func defaultTranslateSample() -> String {
+        let lang = targetLanguage.lowercased()
+        let intoChinese = lang.contains("chinese") || lang.contains("cantonese")
+        if translateMode == .chain {
+            return intoChinese ? Self.englishChainSample : Self.chineseChainSample
+        }
+        return intoChinese ? Self.englishDirectSample : Self.chineseDirectSample
+    }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             HStack(spacing: 8) {
-                FieldLabel(job == .polish ? (source == .dictation ? "As spoken" : "Selected text") : "Text")
+                FieldLabel(inputLabel)
                 Spacer()
                 if job == .polish {
                     Picker("", selection: $source) {
@@ -363,6 +388,15 @@ struct TryIt: View {
                     .labelsHidden()
                     .controlSize(.small)
                     .frame(width: 156)
+                } else {
+                    Picker("", selection: $translateMode) {
+                        Text("Polish → Translate").tag(TranslateMode.chain)
+                        Text("Selection only").tag(TranslateMode.direct)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(width: 244)
                 }
             }
 
@@ -404,11 +438,11 @@ struct TryIt: View {
                     Label(running == nil ? verb : "Stop",
                           systemImage: running == nil ? (job == .polish ? "sparkles" : "translate") : "stop.fill")
                         .labelStyle(.titleAndIcon)
-                        .frame(minWidth: 80)
+                        .frame(minWidth: 92)
                         .contentTransition(.symbolEffect(.replace))
                 }
                 .buttonStyle(.glassProminent)
-                .tint(Brand.violet)
+                .tint(job == .translate ? Color(hex: 0x2F7BF5) : Brand.violet)
                 .disabled(!settings.polishReady || input.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
 
                 if let status {
@@ -424,33 +458,95 @@ struct TryIt: View {
             }
             .animation(Motion.gentle, value: status)
 
+            if job == .translate && translateMode == .chain && !polishedOutput.isEmpty {
+                VStack(alignment: .leading, spacing: 6) {
+                    HStack(spacing: 6) {
+                        Badge(text: "Step 2 · Polished", tint: Brand.violet)
+                        if let d = polishDuration {
+                            Text(String(format: "%.1f s", d))
+                                .font(.system(size: 11))
+                                .foregroundStyle(.tertiary)
+                                .monospacedDigit()
+                        }
+                    }
+                    Text(polishedOutput)
+                        .font(.system(size: 12.5))
+                        .textSelection(.enabled)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                        .padding(11)
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Brand.violet.opacity(0.07)))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Brand.violet.opacity(0.2), lineWidth: 0.5))
+                }
+                .transition(.opacity.combined(with: .move(edge: .top)))
+            }
+
             if !output.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    FieldLabel(job == .polish ? "Polished" : "Translated to \(targetLanguage)")
+                    if job == .translate && translateMode == .chain && !polishedOutput.isEmpty {
+                        HStack(spacing: 5) {
+                            Image(systemName: "arrow.down")
+                                .font(.system(size: 10, weight: .bold))
+                                .foregroundStyle(Color(hex: 0x3DD6C0))
+                            Text("Fed into Translate")
+                                .font(.system(size: 10.5, weight: .medium))
+                                .foregroundStyle(.tertiary)
+                        }
+                        .padding(.leading, 6)
+                    }
+                    HStack(spacing: 6) {
+                        if job == .translate && translateMode == .chain {
+                            Badge(text: "Step 3 · Translated to \(targetLanguage)", tint: Color(hex: 0x2F7BF5))
+                            if let d = translateDuration {
+                                Text(String(format: "%.1f s", d))
+                                    .font(.system(size: 11))
+                                    .foregroundStyle(.tertiary)
+                                    .monospacedDigit()
+                            }
+                        } else {
+                            FieldLabel(job == .polish ? "Polished" : "Translated to \(targetLanguage)")
+                        }
+                    }
+                    let tint = job == .translate ? Color(hex: 0x2F7BF5) : Brand.violet
                     Text(output)
                         .font(.system(size: 13))
                         .textSelection(.enabled)
                         .frame(maxWidth: .infinity, alignment: .leading)
                         .padding(12)
-                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Brand.violet.opacity(0.08)))
-                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(Brand.violet.opacity(0.2), lineWidth: 0.5))
+                        .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(tint.opacity(0.08)))
+                        .overlay(RoundedRectangle(cornerRadius: 8, style: .continuous).strokeBorder(tint.opacity(0.22), lineWidth: 0.5))
                 }
                 .transition(.opacity.combined(with: .move(edge: .top)))
             }
         }
         .animation(Motion.smooth, value: output.isEmpty)
+        .animation(Motion.smooth, value: polishedOutput.isEmpty)
         .onChange(of: settings.translateLanguage) {
             guard job == .translate, !userEdited else { return }
-            let lang = targetLanguage.lowercased()
-            input = (lang.contains("chinese") || lang.contains("cantonese"))
-                ? Self.englishTranslateSample : Self.chineseTranslateSample
+            input = defaultTranslateSample()
+        }
+        .onChange(of: translateMode) {
+            guard job == .translate else { return }
+            if !userEdited { input = defaultTranslateSample() }
+            polishedOutput = ""
+            polishDuration = nil
+            output = ""
+            translateDuration = nil
+            status = nil
         }
     }
 
+    private var inputLabel: String {
+        if job == .polish { return source == .dictation ? "Step 1 · As spoken" : "Selected text" }
+        return translateMode == .chain ? "Step 1 · As spoken (raw transcript)" : "Selected text"
+    }
+
     private func run() {
+        polishedOutput = ""
+        polishDuration = nil
         output = ""
+        translateDuration = nil
         failed = false
-        status = "Sending…"
+        status = job == .translate && translateMode == .chain ? "Step 1/2 · Polishing…" : "Sending…"
         started = Date()
         let model = settings.openRouterModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let client = settings.openRouterClient()
@@ -458,21 +554,49 @@ struct TryIt: View {
         let text = input
         let job = self.job
         let source = self.source
+        let mode = self.translateMode
         let vocabulary = settings.vocabularyTerms
-        let instructions = job == .polish ? settings.prompt : settings.translatePrompt
+        let polishPrompt = settings.prompt
+        let translatePrompt = settings.translatePrompt
         let language = settings.translateLanguage
         running = Task {
             do {
-                let report: @Sendable (PolishProgress) -> Void = { p in Task { @MainActor in show(p) } }
-                let out = job == .polish
-                    ? try await client.polish(model: model, info: info, instructions: instructions, input: text,
-                                              source: source, vocabulary: vocabulary, progress: report)
-                    : try await client.translate(model: model, info: info, instructions: instructions, input: text,
-                                                 language: language, progress: report)
-                output = out.text
-                let s = Date().timeIntervalSince(started)
-                status = String(format: "Done in %.1f s", s) + (out.attempts > 1 ? " · \(out.attempts) attempts" : "")
-                    + (out.servedBy.map { " · \($0)" } ?? "")
+                if job == .polish {
+                    let report: @Sendable (PolishProgress) -> Void = { p in Task { @MainActor in show(p, intoPolished: false) } }
+                    let out = try await client.polish(model: model, info: info, instructions: polishPrompt, input: text,
+                                                      source: source, vocabulary: vocabulary, progress: report)
+                    output = out.text
+                    let s = Date().timeIntervalSince(started)
+                    status = String(format: "Done in %.1f s", s) + (out.attempts > 1 ? " · \(out.attempts) attempts" : "")
+                        + (out.servedBy.map { " · \($0)" } ?? "")
+                } else if mode == .chain {
+                    let step1Start = Date()
+                    let report1: @Sendable (PolishProgress) -> Void = { p in Task { @MainActor in show(p, intoPolished: true) } }
+                    let polished = try await client.polish(model: model, info: info, instructions: polishPrompt, input: text,
+                                                           source: .dictation, vocabulary: vocabulary, progress: report1)
+                    polishedOutput = polished.text
+                    polishDuration = Date().timeIntervalSince(step1Start)
+                    status = "Step 2/2 · Translating…"
+                    let step2Start = Date()
+                    let report2: @Sendable (PolishProgress) -> Void = { p in Task { @MainActor in show(p, intoPolished: false) } }
+                    let translated = try await client.translate(model: model, info: info, instructions: translatePrompt,
+                                                                input: polished.text, language: language, progress: report2)
+                    output = translated.text
+                    translateDuration = Date().timeIntervalSince(step2Start)
+                    let total = Date().timeIntervalSince(started)
+                    let totalAttempts = polished.attempts + translated.attempts
+                    status = String(format: "Chain done in %.1f s", total)
+                        + (totalAttempts > 2 ? " · \(totalAttempts) requests" : "")
+                        + (translated.servedBy.map { " · \($0)" } ?? "")
+                } else {
+                    let report: @Sendable (PolishProgress) -> Void = { p in Task { @MainActor in show(p, intoPolished: false) } }
+                    let out = try await client.translate(model: model, info: info, instructions: translatePrompt,
+                                                         input: text, language: language, progress: report)
+                    output = out.text
+                    let s = Date().timeIntervalSince(started)
+                    status = String(format: "Done in %.1f s", s) + (out.attempts > 1 ? " · \(out.attempts) attempts" : "")
+                        + (out.servedBy.map { " · \($0)" } ?? "")
+                }
             } catch {
                 let f = error as? PolishFailure
                 if f?.kind != .cancelled {
@@ -484,13 +608,22 @@ struct TryIt: View {
         }
     }
 
-    private func show(_ p: PolishProgress) {
+    private func show(_ p: PolishProgress, intoPolished: Bool) {
         guard running != nil else { return }
+        let prefix = (job == .translate && translateMode == .chain) ? (intoPolished ? "Step 1/2 · " : "Step 2/2 · ") : ""
         switch p {
-        case .attempt(let n): status = n == 1 ? "Waiting for the model…" : "Attempt \(n)…"
-        case .thinking: status = "Thinking…"
-        case .text(let t): output = PolishPrompt.clean(t, input: input); status = "Writing…"
-        case .retrying(let next, let reason): status = "Retrying (\(next) of \(OpenRouterClient.maxAttempts)): \(reason)"
+        case .attempt(let n): status = prefix + (n == 1 ? "Waiting for the model…" : "Attempt \(n)…")
+        case .thinking: status = prefix + "Thinking…"
+        case .text(let t):
+            let cleaned = PolishPrompt.clean(t, input: intoPolished ? input : (polishedOutput.isEmpty ? input : polishedOutput))
+            if intoPolished {
+                polishedOutput = cleaned
+                status = prefix + "Polishing…"
+            } else {
+                output = cleaned
+                status = prefix + "Writing…"
+            }
+        case .retrying(let next, let reason): status = prefix + "Retrying (\(next) of \(OpenRouterClient.maxAttempts)): \(reason)"
         }
     }
 

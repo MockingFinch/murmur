@@ -53,6 +53,15 @@ public struct UsageRecord: Codable, Identifiable, Hashable, Sendable {
         let spent = (audioSeconds + waitSeconds) / 60
         return max(0, typingMinutes - spent)
     }
+
+    /// How many times faster speaking was than typing for this single dictation.
+    public var speedMultiplier: Double? {
+        guard kind == .dictation, audioSeconds >= 1.5, characters >= 12 else { return nil }
+        let spent = (audioSeconds + waitSeconds) / 60
+        guard spent > 0 else { return nil }
+        let ratio = typingMinutes / spent
+        return ratio >= 1.15 ? ratio : nil
+    }
 }
 
 public struct UsageSummary: Equatable, Sendable {
@@ -84,6 +93,10 @@ public struct UsageSummary: Equatable, Sendable {
     public var medianWait: Double?
     /// Characters per minute of speech.
     public var speakingPace: Double?
+    /// Overall speed multiplier across dictations vs. typing (e.g. 2.8x).
+    public var speedMultiplier: Double?
+    /// Most visible characters produced in a single dictation.
+    public var bestDictationChars = 0
     /// Consecutive days with at least one use, ending today (or yesterday).
     public var streak = 0
 }
@@ -133,6 +146,13 @@ public enum UsageMath {
         if seconds > 10 {
             s.speakingPace = Double(spoken.reduce(0) { $0 + $1.characters }) / (seconds / 60)
         }
+        let totalTyping = spoken.reduce(0.0) { $0 + $1.typingMinutes }
+        let totalSpent = spoken.reduce(0.0) { $0 + ($1.audioSeconds + $1.waitSeconds) / 60 }
+        if totalSpent > 0.05 {
+            let ratio = totalTyping / totalSpent
+            if ratio >= 1.1 { s.speedMultiplier = ratio }
+        }
+        s.bestDictationChars = records.filter { $0.kind == .dictation }.map(\.characters).max() ?? 0
 
         var day = todayStart
         if byDay[day] == nil, let y = calendar.date(byAdding: .day, value: -1, to: day) { day = y }

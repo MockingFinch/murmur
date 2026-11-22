@@ -108,7 +108,7 @@ Demo scripts, mock app windows, and wallpapers live in `Sources/Murmur/App/Films
   - `UI/`: Resizable SwiftUI settings window and pages.
   - `App/`: Menu bar controller, app lifecycle, and offscreen snapshot/film tools.
 
-In `HUDView`, the glass capsule animates its measured width and height around a fixed horizontal center (anchored at the bottom or top edge depending on **General → Floating bar position**) on the screen containing the focused window. Active and result contents lay out independently so outgoing transcripts and incoming confirmations crossfade cleanly, and streaming model jobs hold a height floor equal to the preview transcript to avoid collapsing on the first token. Busy and error cues pulse the status icon inside the capsule rather than shifting the window frame, and all capsule animations respect `accessibilityReduceMotion`.
+In `HUDView`, the glass capsule animates its measured width and height around a fixed horizontal center (anchored at the bottom or top edge depending on **General → Floating bar position**) on the screen containing the focused window. Multi-stage sessions show a live `Speech → Polish → Translate` progress strip with stage-keyed under-glass glows (coral, violet, teal, mint) and a concise completion metric pill on finished dictations. Active and result contents lay out independently so outgoing transcripts and incoming confirmations crossfade cleanly, and streaming model jobs hold a height floor equal to the preview transcript to avoid collapsing on the first token. Busy and error cues pulse the status icon inside the capsule rather than shifting the window frame, and all capsule animations respect `accessibilityReduceMotion`.
 
 ## Failure handling reference
 

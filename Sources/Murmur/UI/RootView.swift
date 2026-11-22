@@ -79,6 +79,25 @@ extension Page {
         case .general: return "gearshape"
         }
     }
+
+    /// Stage index (1–3) for pipeline pages, nil for Overview and General.
+    var pipelineStep: Int? {
+        switch self {
+        case .speech: return 1
+        case .polish: return 2
+        case .translate: return 3
+        case .overview, .general: return nil
+        }
+    }
+
+    var tintColor: Color {
+        switch self {
+        case .speech: return Brand.coral
+        case .polish: return Brand.violet
+        case .translate: return Color(hex: 0x3DD6C0)
+        case .overview, .general: return Color.accentColor
+        }
+    }
 }
 
 struct RootView: View {
@@ -95,8 +114,9 @@ struct RootView: View {
         .background {
             // ⌘1 – ⌘5 switch settings pages from anywhere in the window.
             ForEach(Array(Page.allCases.enumerated()), id: \.element.id) { index, page in
+                let key = KeyEquivalent(Character(String(index + 1)))
                 Button("") { withAnimation(Motion.snappy) { navigator.page = page } }
-                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                    .keyboardShortcut(key, modifiers: .command)
                     .focusable(false)
                     .focusEffectDisabled()
                     .opacity(0)
@@ -117,7 +137,7 @@ private struct Detail: View {
     var body: some View {
         let page = navigator.page
         ScrollView {
-            VStack(alignment: .leading, spacing: 28) {
+            VStack(alignment: .leading, spacing: 26) {
                 switch page {
                 case .overview: OverviewPage()
                 case .speech: SpeechPage()
@@ -140,24 +160,63 @@ private struct Detail: View {
 
 // MARK: - Sidebar
 
-/// Five quiet rows with room to breathe. The highlight is a soft fill that
-/// glides to the chosen row; a small amber dot marks a page that still
-/// needs setting up or attention.
+/// Overview at top, the 3-stage Speech → Polish → Translate pipeline connected
+/// visually in the middle, and General below.
 private struct Sidebar: View {
     @Environment(Navigator.self) private var navigator
     @Namespace private var highlight
     private let settings = AppSettings.shared
     private let readiness = Readiness.shared
 
+    private static let pipelinePages: [Page] = [.speech, .polish, .translate]
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
-            VStack(spacing: 3) {
-                ForEach(Page.allCases) { page in
-                    SidebarRow(page: page, selected: navigator.page == page,
-                               needsAttention: needsAttention(page), highlight: highlight) {
-                        withAnimation(Motion.snappy) { navigator.page = page }
+            VStack(alignment: .leading, spacing: 3) {
+                row(.overview)
+
+                Text("PIPELINE")
+                    .font(.system(size: 10, weight: .semibold))
+                    .foregroundStyle(.tertiary)
+                    .tracking(0.7)
+                    .padding(.horizontal, 12)
+                    .padding(.top, 14)
+                    .padding(.bottom, 4)
+
+                // Connected 1 → 2 → 3 pipeline rail behind the three stages.
+                VStack(spacing: 3) {
+                    ForEach(Self.pipelinePages) { page in
+                        row(page)
                     }
                 }
+                .background(alignment: .topLeading) {
+                    // Two short vertical connectors centered cleanly between
+                    // circle 1 (y=17), circle 2 (y=54), and circle 3 (y=91).
+                    VStack(spacing: 23) {
+                        Capsule()
+                            .fill(LinearGradient(
+                                colors: [Brand.coral.opacity(0.55), Brand.violet.opacity(0.55)],
+                                startPoint: .top, endPoint: .bottom
+                            ))
+                            .frame(width: 1.5, height: 14)
+                        Capsule()
+                            .fill(LinearGradient(
+                                colors: [Brand.violet.opacity(0.55), Color(hex: 0x3DD6C0).opacity(0.55)],
+                                startPoint: .top, endPoint: .bottom
+                            ))
+                            .frame(width: 1.5, height: 14)
+                    }
+                    .padding(.top, 28.5)
+                    .padding(.leading, 19.25)
+                }
+
+                Rectangle()
+                    .fill(Color.hairline)
+                    .frame(height: 0.5)
+                    .padding(.horizontal, 10)
+                    .padding(.vertical, 10)
+
+                row(.general)
             }
             .padding(.horizontal, 10)
             .padding(.top, 10)
@@ -172,6 +231,13 @@ private struct Sidebar: View {
         .focusEffectDisabled()
         .onKeyPress(.downArrow) { step(1) }
         .onKeyPress(.upArrow) { step(-1) }
+    }
+
+    private func row(_ page: Page) -> some View {
+        SidebarRow(page: page, selected: navigator.page == page,
+                   needsAttention: needsAttention(page), highlight: highlight) {
+            withAnimation(Motion.snappy) { navigator.page = page }
+        }
     }
 
     private func step(_ by: Int) -> KeyPress.Result {
@@ -202,14 +268,28 @@ private struct SidebarRow: View {
 
     var body: some View {
         Button(action: action) {
-            HStack(spacing: 11) {
-                Image(systemName: page.symbol)
-                    .font(.system(size: 14, weight: .medium))
-                    .symbolRenderingMode(.monochrome)
-                    .foregroundStyle(selected ? Color.accentColor : Color(nsColor: .secondaryLabelColor))
-                    .frame(width: 20)
+            HStack(spacing: 10) {
+                if let step = page.pipelineStep {
+                    Text("\(step)")
+                        .font(.system(size: 10, weight: .bold, design: .rounded))
+                        .foregroundStyle(selected ? .white : page.tintColor)
+                        .frame(width: 17, height: 17)
+                        .background(
+                            Circle().fill(selected ? page.tintColor : page.tintColor.opacity(0.11))
+                        )
+                        .overlay(
+                            Circle().strokeBorder(selected ? Color.clear : page.tintColor.opacity(0.45), lineWidth: 1)
+                        )
+                        .frame(width: 20)
+                } else {
+                    Image(systemName: page.symbol)
+                        .font(.system(size: 14, weight: .medium))
+                        .symbolRenderingMode(.monochrome)
+                        .foregroundStyle(selected ? page.tintColor : Color(nsColor: .secondaryLabelColor))
+                        .frame(width: 20)
+                }
                 Text(page.title)
-                    .font(.system(size: 13, weight: .medium))
+                    .font(.system(size: 13, weight: selected ? .semibold : .medium))
                     .foregroundStyle(Color(nsColor: selected ? .labelColor : .secondaryLabelColor))
                     .lineLimit(1)
                     .fixedSize()
@@ -240,7 +320,7 @@ private struct SidebarRow: View {
         .onHover { hovering = $0 }
         .animation(Motion.gentle, value: hovering)
         .animation(Motion.smooth, value: needsAttention)
-        .accessibilityLabel(page.title)
+        .accessibilityLabel(page.pipelineStep.map { "Step \($0): \(page.title)" } ?? page.title)
         .accessibilityAddTraits(selected ? .isSelected : [])
     }
 }

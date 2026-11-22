@@ -36,6 +36,8 @@ A second shortcut runs the same flow plus a translation step into your chosen ta
 
 ## Key design choices
 
+**A chained three-stage pipeline instead of one combined prompt.** Many dictation tools run translation in a single prompt that skips polishing, which makes output harder to control and forces you to duplicate tone and formatting rules. Murmur keeps Speech (ASR), Polish (LLM), and Translate (LLM) as distinct, sequential stages. Because Translate consumes Polish's cleaned output, every improvement to your vocabulary or polish prompt improves translation too, and each stage can be inspected, tested, and tuned on its own.
+
 **Doubao ASR 2.0 for speech recognition.** Accurate Mandarin and mixed Chinese/English recognition was the hardest constraint. Doubao's streaming WebSocket API handles code-switching well, gives immediate live feedback while you talk, and runs a higher-accuracy second pass over each completed sentence before final delivery.
 
 **Any OpenAI-compatible model for polishing and translation.** Models improve and drop in price quickly, so hardcoding one provider would lock the app in time. Speaking standard Chat Completions lets you use OpenRouter (the default, giving one-key access to most models), OpenAI, DeepSeek, or a local server like Ollama or LM Studio when you want text to stay on your Mac.

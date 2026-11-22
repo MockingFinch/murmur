@@ -28,13 +28,13 @@
 
 Talking is much faster than typing, especially when you're switching between Pinyin and English or explaining context to an AI coding tool. The problem is that raw speech transcripts are messy: *ums*, restarts, and "wait, make that Thursday" don't belong in an email or Slack message.
 
-Murmur sits in your menu bar, transcribes live as you talk, runs what you said through an LLM to tidy it up, and pastes the result right where your cursor is.
+Murmur sits in your menu bar and runs your speech through a clear, three-stage chain: **Speech (ASR) → Polish (LLM) → Translate (LLM)**. Because each stage is separate, you can tune recognition vocabulary, your writing prompt, or your translation style independently, and every improvement carries downstream.
 
 <table>
   <tr>
-    <td width="33%" valign="top"><b>1 · Press <kbd>⌃</kbd> <kbd>X</kbd> and talk</b><br>Works in Mail, Slack, WeChat, Notion, your browser, or your editor. Tap to toggle for long thoughts, or hold and release for quick replies.</td>
-    <td width="33%" valign="top"><b>2 · Stop talking</b><br>Press <kbd>⌃</kbd> <kbd>X</kbd> again (or release if held). Murmur finishes transcribing, removes filler words and self-corrections, adds punctuation, and keeps your tone intact.</td>
-    <td width="33%" valign="top"><b>3 · Pasted in place</b><br>The cleaned-up text goes straight into your active text field. Keep it on your clipboard as a backup, or restore your previous clipboard automatically.</td>
+    <td width="33%" valign="top"><b>1 · Speech (<kbd>⌃</kbd> <kbd>X</kbd>)</b><br>Works in Mail, Slack, WeChat, Notion, your browser, or your editor. Tap to toggle for long thoughts, or hold and release for quick replies.</td>
+    <td width="33%" valign="top"><b>2 · Polish</b><br>Doubao's final transcript flows into your LLM prompt: filler words and self-corrections disappear, punctuation lands cleanly, and your tone stays intact.</td>
+    <td width="33%" valign="top"><b>3 · Translate (<kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd>)</b><br>Optional third stage that translates the already-cleaned output into your target language, then pastes it in place with a quick speed payoff.</td>
   </tr>
 </table>
 
@@ -117,7 +117,7 @@ The Overview page tracks characters written, how many times you used Murmur, and
   <img src="docs/media/capsule.webp" width="100%" alt="The capsule in six states: listening with live words, listening for translation with an English badge, polishing, translating, reconnecting while still recording, and done.">
 </p>
 
-While Murmur is working, it shows a small floating bar on the display with your focused window (anchored at the bottom or top, configurable in General), then fades out once the text lands. It never takes focus away from the app you're typing in. Press <kbd>Esc</kbd> while recording to cancel and discard it; once you've been talking for a while, Murmur asks for a second <kbd>Esc</kbd> so an accidental tap never wipes out a long thought. Outside of a recording, <kbd>Esc</kbd> behaves normally in your front app.
+While Murmur is working, it shows a small floating bar on the display with your focused window (anchored at the bottom or top, configurable in General). Multi-stage sessions display a live **Speech → Polish → Translate** stepper so you can watch each stage lock in, finish with a subtle completion chime and speed summary (characters written and time saved or speed multiplier), and fade out once the text lands. It never takes focus away from the app you're typing in. Press <kbd>Esc</kbd> while recording to cancel and discard it; once you've been talking for a while, Murmur asks for a second <kbd>Esc</kbd> so an accidental tap never wipes out a long thought. Outside of a recording, <kbd>Esc</kbd> behaves normally in your front app.
 
 <br>
 

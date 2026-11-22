@@ -21,8 +21,19 @@ struct OverviewPage: View {
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
 
+        PageSection(title: "Your pipeline",
+                    trailing: AnyView(
+                        Text("Independent stages · tune any step")
+                            .font(.system(size: 11.5))
+                            .foregroundStyle(.tertiary)
+                    )) {
+            PipelineFlowCard()
+        }
+
         if setupComplete || summary.allTime.uses > 0 {
-            PageSection(title: "Today") {
+            PageSection(title: "Today", trailing: summary.speedMultiplier.map { speed in
+                AnyView(Badge(text: String(format: "%.1f× faster than typing", speed), tint: Brand.mint))
+            }) {
                 HStack(spacing: 12) {
                     StatTile(value: Format.count(summary.today.characters), label: "characters",
                              symbol: "character.cursor.ibeam", tint: Brand.azure)
@@ -62,6 +73,14 @@ struct OverviewPage: View {
                                    help: "Median time from your second press to the text appearing (last 50 uses).")
                             Figure(title: "Day streak", value: summary.streak == 0 ? "—" : "\(summary.streak)")
                         }
+                    }
+                    if all.uses > 0 {
+                        Divider().padding(.horizontal, 14).opacity(0.6)
+                        MilestoneFooter(minutesSaved: all.minutesSaved,
+                                        characters: all.characters,
+                                        bestChars: summary.bestDictationChars)
+                            .padding(.horizontal, 14)
+                            .padding(.vertical, 12)
                     }
                 }
             }
@@ -407,6 +426,65 @@ private struct ActivityChart: View {
 }
 
 // MARK: - Formatting
+
+/// Quiet time-saved milestone tracker inside the All time card.
+private struct MilestoneFooter: View {
+    let minutesSaved: Double
+    let characters: Int
+    let bestChars: Int
+
+    /// Ascending time-saved milestones in minutes.
+    private static let ladder: [Double] = [10, 30, 60, 180, 300, 600, 1440, 3000, 6000]
+
+    private var target: Double {
+        Self.ladder.first { $0 > minutesSaved } ?? ((minutesSaved / 600).rounded(.up) + 1) * 600
+    }
+
+    private var previous: Double {
+        Self.ladder.last { $0 <= minutesSaved } ?? 0
+    }
+
+    private var progress: Double {
+        let span = max(1, target - previous)
+        return min(1, max(0.03, (minutesSaved - previous) / span))
+    }
+
+    var body: some View {
+        let left = max(0, target - minutesSaved)
+        let pages = max(1, Int((Double(characters) / 500.0).rounded()))
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(alignment: .firstTextBaseline, spacing: 8) {
+                Text("Next milestone: \(Format.minutes(target)) saved")
+                    .font(.system(size: 11.5, weight: .semibold))
+                    .foregroundStyle(.primary)
+                Text("(\(Format.minutes(left)) to go)")
+                    .font(.system(size: 11.5))
+                    .foregroundStyle(.secondary)
+                Spacer()
+                HStack(spacing: 10) {
+                    Text("~\(pages) \(pages == 1 ? "page" : "pages") written")
+                    if bestChars >= 30 {
+                        Text("·")
+                        Text("Best take: \(Format.count(bestChars)) chars")
+                    }
+                }
+                .font(.system(size: 11))
+                .foregroundStyle(.tertiary)
+            }
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.well)
+                    Capsule()
+                        .fill(LinearGradient(colors: [Brand.coral, Brand.violet, Brand.mint],
+                                             startPoint: .leading, endPoint: .trailing))
+                        .frame(width: max(8, geo.size.width * progress))
+                }
+            }
+            .frame(height: 5)
+            .animation(Motion.smooth, value: progress)
+        }
+    }
+}
 
 enum Format {
     static func count(_ n: Int) -> String {

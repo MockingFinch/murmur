@@ -11,6 +11,8 @@ struct TranslatePage: View {
         PageHeader(symbol: "translate", gradient: Brand.translate, title: "Translate",
                    subtitle: "Speak in one language, insert in another: Murmur polishes what you said, then translates it. With text selected, the same shortcut translates the selection.")
 
+        StageBreadcrumb(current: .translate)
+
         if !settings.polishReady {
             Card {
                 HStack(spacing: 12) {

@@ -5,6 +5,29 @@ import MurmurCore
 /// What the floating capsule shows.
 @MainActor @Observable
 final class HUDModel {
+    /// The three stages of Murmur's chained pipeline.
+    enum Stage: String, Hashable, Identifiable, CaseIterable {
+        case speech, polish, translate
+        var id: String { rawValue }
+    }
+
+    /// Live progression along the active session's chain (e.g. Speech → Polish → English).
+    struct Pipeline: Hashable {
+        var stages: [Stage]
+        var active: Stage?
+        var completed: Set<Stage> = []
+        var skipped: Set<Stage> = []
+        var targetLanguage: String?
+
+        func label(for stage: Stage) -> String {
+            switch stage {
+            case .speech: return "Speech"
+            case .polish: return "Polish"
+            case .translate: return targetLanguage.map { TranslationLanguages.native($0) } ?? "Translate"
+            }
+        }
+    }
+
     enum Mode: Hashable {
         /// Waiting briefly for selection probe before listening begins.
         case arming
@@ -15,7 +38,8 @@ final class HUDModel {
         /// The model is at work: polishing a dictation, refining a
         /// selection, or translating either.
         case model(Job, retry: Int, thinking: Bool)
-        case done(String)
+        /// Completed cleanly, with an optional concise payoff metric (e.g. "142 chars · 3.1× faster").
+        case done(String, detail: String? = nil)
         case notice(Notice)
         case cancelled
 
@@ -59,6 +83,8 @@ final class HUDModel {
     }
     /// The session content that fades as a result appears.
     private(set) var resultOrigin: Mode?
+    /// Active chained pipeline state for the current session; nil when hidden or single-step notice.
+    var pipeline: Pipeline?
     /// Live words: Doubao's partial text, then the model's answer as it streams.
     var liveText = ""
     /// The text the model is working on, shown dimmed until its answer starts.
@@ -84,6 +110,7 @@ final class HUDModel {
     func reset() {
         dismissal?.cancel()
         clearEscapeConfirm()
+        pipeline = nil
         liveText = ""
         preview = ""
         target = nil
@@ -93,10 +120,36 @@ final class HUDModel {
         startedAt = Date()
     }
 
-    func startListening(translatingTo target: String? = nil) {
+    func startListening(translatingTo target: String? = nil, polishEnabled: Bool? = nil) {
         reset()
         self.target = target
+        let polish = polishEnabled ?? AppSettings.shared.polishReady
+        var stages: [Stage] = [.speech]
+        if polish { stages.append(.polish) }
+        if target != nil { stages.append(.translate) }
+        pipeline = Pipeline(stages: stages, active: .speech, targetLanguage: target)
         mode = .listening
+    }
+
+    func advancePipeline(completed stage: Stage, next: Stage?) {
+        guard var p = pipeline else { return }
+        p.completed.insert(stage)
+        p.active = next
+        pipeline = p
+    }
+
+    func skipPipelineStage(_ stage: Stage, next: Stage? = nil) {
+        guard var p = pipeline else { return }
+        p.skipped.insert(stage)
+        p.active = next
+        pipeline = p
+    }
+
+    func completePipeline() {
+        guard var p = pipeline else { return }
+        if let active = p.active { p.completed.insert(active) }
+        p.active = nil
+        pipeline = p
     }
 
     func show(_ mode: Mode) {
@@ -143,11 +196,12 @@ final class HUDModel {
         dismissal?.cancel()
         clearEscapeConfirm()
         quietCountdown = nil
+        if case .done = mode { completePipeline() }
         self.mode = mode
         if case .notice(let n) = mode, n.tone == .error { nudge() }
         let hold: Double
         switch mode {
-        case .done: hold = 1.15
+        case .done(_, let detail): hold = detail == nil ? 1.15 : 1.75
         case .cancelled: hold = 0.58
         case .notice(let n): hold = n.detail == nil ? 2.4 : ((n.detail?.count ?? 0) > 64 ? 6.2 : 4.2)
         default: hold = 1.5

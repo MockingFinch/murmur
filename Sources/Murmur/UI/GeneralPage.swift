@@ -83,7 +83,7 @@ struct GeneralPage: View {
                     Toggle("", isOn: $settings.restoreClipboard).toggleStyle(.switch).labelsHidden()
                 }
                 RowDivider()
-                SettingRow(title: "Sounds", detail: "Soft cues when listening starts, stops, or cancels.") {
+                SettingRow(title: "Sounds", detail: "Soft chimes as dictation starts, hands off, and finishes.") {
                     Toggle("", isOn: $settings.sounds).toggleStyle(.switch).labelsHidden()
                 }
                 RowDivider()

@@ -10,7 +10,7 @@ struct HUDView: View {
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     private let settings = AppSettings.shared
 
-    static let canvas = CGSize(width: 680, height: 260)
+    static let canvas = CGSize(width: 680, height: 280)
 
     private var position: HUDPosition { fixedPosition ?? (snapshot ? .bottom : settings.hudPosition) }
 
@@ -67,6 +67,7 @@ private struct HUDCapsule: View {
                 glow(for: activeMode).opacity(showingResult ? 0 : 1)
                 glow(for: resultMode).opacity(showingResult ? 1 : 0)
             }
+            .animation(.easeOut(duration: 0.22), value: activeMode)
             .animation(.easeOut(duration: 0.18), value: showingResult)
         }
         .background(surface)
@@ -110,8 +111,8 @@ private struct HUDCapsule: View {
         }
     }
 
-    /// A light under the glass: warm and following the voice while
-    /// listening, cool and breathing while the model works.
+    /// A light under the glass keyed to each pipeline stage: warm coral for Speech,
+    /// violet for Polish, teal/cyan for Translate, and mint on completion.
     @ViewBuilder private func glow(for mode: HUDModel.Mode) -> some View {
         switch mode {
         case .arming, .listening:
@@ -126,7 +127,31 @@ private struct HUDCapsule: View {
                         .offset(x: 40, y: 32)
                 }
             }
-        case .model, .transcribing:
+        case .model(.translate, _, _):
+            TimelineView(.animation(paused: reduceMotion)) { ctx in
+                let t = reduceMotion ? 0.0 : ctx.date.timeIntervalSinceReferenceDate
+                ZStack {
+                    Aura(color: Color(hex: 0x3DD6C0), strength: 0.30 + 0.10 * sin(t * 2.2))
+                        .frame(width: 260, height: 90)
+                        .offset(x: CGFloat(sin(t * 0.9)) * 70, y: 32)
+                    Aura(color: Color(hex: 0x2F7BF5), strength: 0.24 + 0.08 * cos(t * 1.7))
+                        .frame(width: 220, height: 80)
+                        .offset(x: CGFloat(cos(t * 0.7)) * -60, y: 34)
+                }
+            }
+        case .transcribing:
+            TimelineView(.animation(paused: reduceMotion)) { ctx in
+                let t = reduceMotion ? 0.0 : ctx.date.timeIntervalSinceReferenceDate
+                ZStack {
+                    Aura(color: Brand.coral, strength: 0.24 + 0.08 * sin(t * 2.4))
+                        .frame(width: 230, height: 84)
+                        .offset(x: CGFloat(sin(t * 0.9)) * 50 - 20, y: 32)
+                    Aura(color: Brand.violet, strength: 0.20 + 0.06 * cos(t * 1.9))
+                        .frame(width: 220, height: 80)
+                        .offset(x: CGFloat(cos(t * 0.8)) * 50 + 20, y: 34)
+                }
+            }
+        case .model:
             TimelineView(.animation(paused: reduceMotion)) { ctx in
                 let t = reduceMotion ? 0.0 : ctx.date.timeIntervalSinceReferenceDate
                 ZStack {
@@ -139,7 +164,7 @@ private struct HUDCapsule: View {
                 }
             }
         case .done:
-            Aura(color: Brand.mint, strength: 0.4).frame(width: 220, height: 80).offset(y: 30)
+            Aura(color: Brand.mint, strength: 0.42).frame(width: 260, height: 86).offset(y: 30)
         default:
             Color.clear
         }
@@ -171,6 +196,11 @@ private struct HUDContents: View {
         return nil
     }
 
+    private var activePipeline: HUDModel.Pipeline? {
+        guard !mode.isResult, let p = model.pipeline, p.stages.count >= 2 else { return nil }
+        return p
+    }
+
     private var hasStatusBadge: Bool {
         model.escapeConfirm || model.quietCountdown != nil || model.link != .live
     }
@@ -185,13 +215,19 @@ private struct HUDContents: View {
     private var fixedWidth: CGFloat? {
         switch mode {
         case .arming:
+            if let p = activePipeline {
+                return p.stages.count >= 3 ? 310 : 244
+            }
             return 214 + (model.target == nil ? 0 : 104)
         case .listening:
             guard line == nil else { return Self.textWidth }
-            let extra = (model.target == nil ? 0 : 104) + (hasStatusBadge ? 148 : 0)
-            return min(Self.textWidth, 214 + CGFloat(extra))
+            let base: CGFloat = activePipeline.map { $0.stages.count >= 3 ? 310 : 244 } ?? 214
+            let targetExtra: CGFloat = (activePipeline == nil && model.target != nil) ? 104 : 0
+            let alertExtra: CGFloat = hasStatusBadge ? 148 : 0
+            return min(Self.textWidth, base + targetExtra + alertExtra)
         case .transcribing:
-            return line == nil ? 214 : Self.textWidth
+            if line != nil { return Self.textWidth }
+            return activePipeline.map { $0.stages.count >= 3 ? 310 : 244 } ?? 214
         case .model:
             return Self.textWidth
         case .done:
@@ -204,7 +240,7 @@ private struct HUDContents: View {
     }
 
     /// Changes worth a spring.
-    private var layoutKey: String { "\(kind)|\(line == nil)|\(hasStatusBadge)" }
+    private var layoutKey: String { "\(kind)|\(line == nil)|\(hasStatusBadge)|\(activePipeline?.stages.count ?? 0)" }
 
     private var kind: String {
         switch mode {
@@ -224,6 +260,12 @@ private struct HUDContents: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
+            if let pipeline = activePipeline {
+                CapsulePipelineStrip(pipeline: pipeline)
+                    .padding(.horizontal, 16)
+                    .padding(.top, 10)
+                    .padding(.bottom, line == nil ? 2 : 0)
+            }
             if let line {
                 Transcript(text: line.text, dim: line.dim, minHeight: modelJob != nil ? jobTranscriptFloor : 0)
                     .frame(width: Self.textWidth - 36)
@@ -233,7 +275,7 @@ private struct HUDContents: View {
                         }
                     }
                     .padding(.horizontal, 18)
-                    .padding(.top, 13)
+                    .padding(.top, activePipeline == nil ? 13 : 8)
                     .transition(reduceMotion
                                 ? .opacity
                                 : .asymmetric(
@@ -254,7 +296,7 @@ private struct HUDContents: View {
         }
         .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.8), value: layoutKey)
         .frame(width: fixedWidth)
-        .frame(minWidth: fixedWidth == nil ? 160 : nil, maxWidth: fixedWidth == nil ? 420 : nil)
+        .frame(minWidth: fixedWidth == nil ? 160 : nil, maxWidth: fixedWidth == nil ? 540 : nil)
         .onChange(of: modelJob) { jobTranscriptFloor = 0 }
     }
 
@@ -269,9 +311,10 @@ private struct HUDContents: View {
             case .transcribing:
                 ArcSpinner().transition(.scale.combined(with: .opacity))
             case .model(let job, _, _):
-                Image(systemName: job == .polish || job == .refine ? "sparkles" : "translate")
+                let isTranslate: Bool = { if case .translate = job { return true }; return false }()
+                Image(systemName: isTranslate ? "translate" : "sparkles")
                     .font(.system(size: 15, weight: .semibold))
-                    .foregroundStyle(Brand.polish)
+                    .foregroundStyle(isTranslate ? Brand.translate : Brand.polish)
                     .symbolEffect(.pulse, options: .repeating, isActive: !reduce)
                     .contentTransition(.symbolEffect(.replace))
                     .transition(.scale.combined(with: .opacity))
@@ -324,13 +367,27 @@ private struct HUDContents: View {
             Shimmering(text: modelLabel(job, retry, thinking))
                 .id(modelLabel(job, retry, thinking))
                 .transition(swapTransition)
-        case .done(let title):
-            Text(title)
-                .font(.system(size: 13.5, weight: .semibold, design: .rounded))
-                .foregroundStyle(.white)
-                .lineLimit(1)
-                .fixedSize(horizontal: true, vertical: false)
-                .transition(swapTransition)
+        case .done(let title, let detail):
+            HStack(spacing: 9) {
+                Text(title)
+                    .font(.system(size: 13.5, weight: .semibold, design: .rounded))
+                    .foregroundStyle(.white)
+                    .lineLimit(1)
+                    .fixedSize(horizontal: true, vertical: false)
+                if let detail {
+                    Text(detail)
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
+                        .monospacedDigit()
+                        .foregroundStyle(Brand.mint)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Brand.mint.opacity(0.15)))
+                        .overlay(Capsule().strokeBorder(Brand.mint.opacity(0.28), lineWidth: 0.5))
+                        .lineLimit(1)
+                        .fixedSize(horizontal: true, vertical: false)
+                }
+            }
+            .transition(swapTransition)
         case .notice(let n):
             VStack(alignment: .leading, spacing: 2) {
                 Text(n.title)
@@ -356,7 +413,7 @@ private struct HUDContents: View {
 
     @ViewBuilder private var trailing: some View {
         if case .arming = mode {
-            if let target = model.target {
+            if activePipeline == nil, let target = model.target {
                 TargetBadge(language: target)
                     .fixedSize()
                     .transition(.opacity)
@@ -372,7 +429,7 @@ private struct HUDContents: View {
                 } else if model.link != .live {
                     LinkBadge(link: model.link).transition(swapTransition)
                 }
-                if let target = model.target { TargetBadge(language: target) }
+                if activePipeline == nil, let target = model.target { TargetBadge(language: target) }
                 ElapsedLabel(since: model.startedAt, limit: DictationEngine.maxRecording)
             }
             .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 0.8),
@@ -409,6 +466,130 @@ private struct HUDContents: View {
         case .info: return .white.opacity(0.7)
         case .warning: return Brand.amber
         case .error: return Brand.coral
+        }
+    }
+}
+
+/// Compact chained pipeline stepper shown inside the capsule so users see each
+/// stage lock in and hand off to the next (Speech → Polish → Translate).
+private struct CapsulePipelineStrip: View {
+    let pipeline: HUDModel.Pipeline
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
+    var body: some View {
+        HStack(spacing: 0) {
+            ForEach(Array(pipeline.stages.enumerated()), id: \.element.id) { index, stage in
+                if index > 0 {
+                    let prev = pipeline.stages[index - 1]
+                    let lit = pipeline.completed.contains(prev)
+                    ConnectorLine(lit: lit, tint: stageColor(stage))
+                }
+                StageChip(
+                    stage: stage,
+                    label: pipeline.label(for: stage),
+                    state: state(for: stage),
+                    tint: stageColor(stage)
+                )
+            }
+        }
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.36, dampingFraction: 0.78),
+                   value: pipeline)
+    }
+
+    private enum StageState: Equatable { case pending, active, completed, skipped }
+
+    private func state(for stage: HUDModel.Stage) -> StageState {
+        if pipeline.completed.contains(stage) { return .completed }
+        if pipeline.skipped.contains(stage) { return .skipped }
+        if pipeline.active == stage { return .active }
+        return .pending
+    }
+
+    private func stageColor(_ stage: HUDModel.Stage) -> Color {
+        switch stage {
+        case .speech: return Brand.coral
+        case .polish: return Brand.violet
+        case .translate: return Color(hex: 0x3DD6C0)
+        }
+    }
+
+    private struct StageChip: View {
+        let stage: HUDModel.Stage
+        let label: String
+        let state: StageState
+        let tint: Color
+
+        var body: some View {
+            HStack(spacing: 4.5) {
+                ZStack {
+                    switch state {
+                    case .completed:
+                        Image(systemName: "checkmark.circle.fill")
+                            .font(.system(size: 10.5, weight: .bold))
+                            .foregroundStyle(Brand.mint)
+                            .transition(.scale(scale: 0.4).combined(with: .opacity))
+                    case .active:
+                        Circle()
+                            .fill(tint)
+                            .frame(width: 6.5, height: 6.5)
+                            .shadow(color: tint.opacity(0.9), radius: 3)
+                            .transition(.scale.combined(with: .opacity))
+                    case .skipped:
+                        Image(systemName: "minus.circle")
+                            .font(.system(size: 10, weight: .semibold))
+                            .foregroundStyle(Brand.amber.opacity(0.8))
+                    case .pending:
+                        Circle()
+                            .strokeBorder(.white.opacity(0.28), lineWidth: 1)
+                            .frame(width: 6.5, height: 6.5)
+                    }
+                }
+                .frame(width: 11, height: 11)
+
+                Text(label)
+                    .font(.system(size: 10.5, weight: state == .active ? .semibold : .medium, design: .rounded))
+                    .foregroundStyle(textColor)
+                    .lineLimit(1)
+                    .fixedSize()
+            }
+            .padding(.horizontal, 6.5)
+            .padding(.vertical, 2.5)
+            .background(
+                Capsule().fill(state == .active ? tint.opacity(0.16) : Color.clear)
+            )
+            .overlay(
+                Capsule().strokeBorder(state == .active ? tint.opacity(0.32) : Color.clear, lineWidth: 0.5)
+            )
+        }
+
+        private var textColor: Color {
+            switch state {
+            case .active: return .white.opacity(0.95)
+            case .completed: return .white.opacity(0.72)
+            case .skipped: return Brand.amber.opacity(0.8)
+            case .pending: return .white.opacity(0.36)
+            }
+        }
+    }
+
+    private struct ConnectorLine: View {
+        let lit: Bool
+        let tint: Color
+
+        var body: some View {
+            HStack(spacing: 3) {
+                Rectangle()
+                    .fill(lit
+                          ? AnyShapeStyle(LinearGradient(colors: [Brand.mint.opacity(0.7), tint.opacity(0.75)],
+                                                         startPoint: .leading, endPoint: .trailing))
+                          : AnyShapeStyle(Color.white.opacity(0.14)))
+                    .frame(height: 1)
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 7, weight: .bold))
+                    .foregroundStyle(lit ? tint.opacity(0.8) : .white.opacity(0.22))
+            }
+            .frame(minWidth: 16, maxWidth: .infinity)
+            .padding(.horizontal, 4)
         }
     }
 }

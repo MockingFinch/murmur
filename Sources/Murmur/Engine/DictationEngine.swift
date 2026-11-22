@@ -195,7 +195,12 @@ final class DictationEngine {
             try? await Task.sleep(nanoseconds: 80_000_000)
             guard !Task.isCancelled, let self, self.run == id, self.state == .arming else { return }
             self.hud.reset()
-            self.hud.target = intent == .translate ? self.targetLanguage : nil
+            let target = intent == .translate ? self.targetLanguage : nil
+            self.hud.target = target
+            var stages: [HUDModel.Stage] = [.speech]
+            if self.settings.polishReady { stages.append(.polish) }
+            if target != nil { stages.append(.translate) }
+            self.hud.pipeline = HUDModel.Pipeline(stages: stages, active: .speech, targetLanguage: target)
             self.hud.show(.arming)
         }
         // The microphone starts at once, before we know whether this is a
@@ -266,7 +271,8 @@ final class DictationEngine {
         guard let credentials = settings.doubaoCredentials else { return }
         self.capture = capture
         state = .listening
-        hud.startListening(translatingTo: intent == .translate ? targetLanguage : nil)
+        hud.startListening(translatingTo: intent == .translate ? targetLanguage : nil,
+                           polishEnabled: settings.polishReady)
         Cue.play(.start)
         if settings.polishReady { settings.openRouterClient().warmUp() }
 
@@ -370,6 +376,11 @@ final class DictationEngine {
         state = .working
         saved = recording.id
         hud.reset()
+        let target = intent == .translate ? targetLanguage : nil
+        var stages: [HUDModel.Stage] = [.speech]
+        if settings.polishReady { stages.append(.polish) }
+        if target != nil { stages.append(.translate) }
+        hud.pipeline = HUDModel.Pipeline(stages: stages, active: .speech, targetLanguage: target)
         hud.show(.transcribing(retry: 0))
         if settings.polishReady { settings.openRouterClient().warmUp() }
         let transcriber = makeTranscriber(credentials, PCMTape(audio), id)
@@ -458,6 +469,7 @@ final class DictationEngine {
         var attempts = 0
         var polishProblem: String?
         if settings.polishReady {
+            hud.advancePipeline(completed: .speech, next: .polish)
             hud.preview = raw
             hud.liveText = ""
             hud.show(.model(.polish, retry: 0, thinking: false))
@@ -472,7 +484,10 @@ final class DictationEngine {
                 polish = .fallback
                 attempts = OpenRouterClient.Tuning().attempts
                 polishProblem = f?.message ?? error.localizedDescription
+                hud.skipPipelineStage(.polish)
             }
+        } else {
+            hud.advancePipeline(completed: .speech, next: nil)
         }
         guard id == run else { return }
 
@@ -482,6 +497,8 @@ final class DictationEngine {
         var translated = false
         var translateProblem: String?
         if intent == .translate, polishProblem == nil, !text.isEmpty {
+            hud.advancePipeline(completed: .polish, next: .translate)
+            Cue.play(.stage)
             hud.preview = text
             hud.liveText = ""
             hud.show(.model(.translate(targetLanguage), retry: 0, thinking: false))
@@ -491,6 +508,7 @@ final class DictationEngine {
                 if out.text.isEmpty {
                     // Never trade the polished text for nothing.
                     translateProblem = "The model returned no translation."
+                    hud.skipPipelineStage(.translate)
                 } else {
                     text = out.text
                     translated = true
@@ -500,6 +518,7 @@ final class DictationEngine {
                 if f?.kind == .cancelled || id != run { return }
                 attempts += OpenRouterClient.Tuning().attempts
                 translateProblem = f?.message ?? error.localizedDescription
+                hud.skipPipelineStage(.translate)
             }
             guard id == run else { return }
         }
@@ -517,12 +536,15 @@ final class DictationEngine {
         lastResult = text
         let restoreClipboard = settings.restoreClipboard
         let pasted = await TextBridge.paste(text, allowPointerFallback: true, restoreClipboard: restoreClipboard)
+        let record = UsageRecord(kind: .dictation, audioSeconds: outcome.seconds, text: text, polish: polish,
+                                 waitSeconds: Date().timeIntervalSince(stoppedAt), attempts: attempts,
+                                 translated: translated)
         // A recording transcribed again was counted, if at all, the first time.
         if !again {
-            UsageStore.shared.add(UsageRecord(kind: .dictation, audioSeconds: outcome.seconds, text: text, polish: polish,
-                                              waitSeconds: Date().timeIntervalSince(stoppedAt), attempts: attempts,
-                                              translated: translated))
+            UsageStore.shared.add(record)
         }
+        let payoff = Self.payoffMetric(for: record)
+        let bigFinish = translated || record.characters >= 80
         // Only words that are all in let the recording go.
         if outcome.isComplete { forgetSaved() }
         let missing = outcome.isComplete ? nil : "The last \(Self.duration(outcome.unconfirmedSeconds)) is missing"
@@ -569,10 +591,12 @@ final class DictationEngine {
                 end(.notice(.init(tone: .warning, title: title, detail: translateProblem)))
             } else if reason == .limit {
                 lastIssue = nil
+                Cue.play(bigFinish ? .doneBig : .done)
                 end(.notice(.init(tone: .info, title: doneTitle,
                                   detail: "Dictations stop at \(Int(Self.maxRecording / 60)) minutes. Press \(settings.shortcut.display) to go on.")))
             } else if reason == .quiet {
                 lastIssue = nil
+                Cue.play(.done)
                 end(.notice(.init(tone: .info, title: doneTitle, detail: quietNote)))
             } else if reason == .microphoneLost {
                 let detail = "The microphone went away, so the dictation stopped there."
@@ -581,9 +605,25 @@ final class DictationEngine {
                 end(.notice(.init(tone: .warning, title: doneTitle, detail: detail)))
             } else {
                 lastIssue = nil
-                end(.done(doneTitle))
+                Cue.play(bigFinish ? .doneBig : .done)
+                end(.done(doneTitle, detail: payoff))
             }
         }
+    }
+
+    /// Concise, earned payoff shown on the Done pill for non-trivial dictations.
+    private static func payoffMetric(for record: UsageRecord) -> String? {
+        guard record.characters >= 20 else { return nil }
+        let chars = "\(Format.count(record.characters)) chars"
+        let savedSec = record.minutesSaved * 60
+        if savedSec >= 30 {
+            let saved = savedSec >= 60 ? Format.minutes(record.minutesSaved) : "\(Int(savedSec.rounded()))s"
+            return "\(chars) · \(saved) saved"
+        }
+        if let speed = record.speedMultiplier, speed >= 1.3 {
+            return String(format: "%@ · %.1f× faster", chars, speed)
+        }
+        return chars
     }
 
     /// How a saved recording is found again.
@@ -641,6 +681,9 @@ final class DictationEngine {
         state = .working
         let started = Date()
         hud.reset()
+        hud.pipeline = HUDModel.Pipeline(stages: [translating ? .translate : .polish],
+                                         active: translating ? .translate : .polish,
+                                         targetLanguage: translating ? language : nil)
         hud.preview = selection.text
         hud.show(.model(translating ? .translate(language) : .refine, retry: 0, thinking: false))
 
@@ -687,19 +730,23 @@ final class DictationEngine {
         switch pasted {
         case .pasted:
             lastIssue = nil
+            Cue.play(.done)
             let title: String
             if restoreClipboard {
                 title = translating ? "Translated and replaced" : "Replaced"
             } else {
                 title = translating ? "Translated, replaced and copied" : "Replaced and copied"
             }
-            end(.done(title))
+            let detail = record.characters >= 20 ? "\(Format.count(record.characters)) chars" : nil
+            end(.done(title, detail: detail))
         case .copied(let why):
             if why.contains("isn't editable") {
                 // Translating or refining read-only text (webpage, PDF, received message):
                 // copying to clipboard is the clean expected result.
                 lastIssue = nil
-                end(.done(translating ? "Translation copied" : "Refined text copied"))
+                Cue.play(.done)
+                let detail = record.characters >= 20 ? "\(Format.count(record.characters)) chars" : nil
+                end(.done(translating ? "Translation copied" : "Refined text copied", detail: detail))
             } else {
                 let page: Page? = why.contains("General page") ? .general : nil
                 recordIssue("Copied to the clipboard", why, page: page)

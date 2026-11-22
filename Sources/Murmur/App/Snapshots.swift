@@ -54,16 +54,23 @@ enum Snapshots {
             ("arming", { m in m.show(.arming) }),
             ("transcribing", { m in m.show(.transcribing(retry: 0)) }),
             ("reconnecting", { m in m.show(.transcribing(retry: 3)) }),
-            ("polishing", { m in m.preview = "嗯那个我觉得这个方案呢其实还可以"; m.show(.model(.polish, retry: 0, thinking: false)) }),
+            ("polishing", { m in
+                m.pipeline = HUDModel.Pipeline(stages: [.speech, .polish], active: .polish, completed: [.speech])
+                m.preview = "嗯那个我觉得这个方案呢其实还可以"
+                m.show(.model(.polish, retry: 0, thinking: false))
+            }),
             ("polishing-long", { m in
+                m.pipeline = HUDModel.Pipeline(stages: [.speech, .polish], active: .polish, completed: [.speech])
                 m.show(.model(.polish, retry: 0, thinking: false))
                 m.liveText = "下周安排：周三前发出初版；周四请设计团队评审并收集意见；周五打磨新手引导流程，之后交给测试做完整回归。"
                 m.waitingSince = Date().addingTimeInterval(-9)
             }),
             ("thinking", { m in m.show(.model(.polish, retry: 0, thinking: true)) }),
             ("retrying", { m in m.show(.model(.polish, retry: 2, thinking: false)); m.waitingSince = Date().addingTimeInterval(-47) }),
-            ("listening-translate", { m in m.startListening(translatingTo: "Simplified Chinese"); m.level = 0.6 }),
+            ("listening-translate", { m in m.startListening(translatingTo: "Simplified Chinese", polishEnabled: true); m.level = 0.6 }),
             ("translating", { m in
+                m.pipeline = HUDModel.Pipeline(stages: [.speech, .polish, .translate], active: .translate,
+                                               completed: [.speech, .polish], targetLanguage: "Japanese")
                 m.preview = "So the plan for next week is to ship the first draft on Wednesday."
                 m.show(.model(.translate("Japanese"), retry: 0, thinking: false))
                 m.liveText = "来週の予定としては、水曜日に"
@@ -72,9 +79,9 @@ enum Snapshots {
                 m.preview = "我觉得这个方案其实还可以，就是时间上可能有点紧。"
                 m.show(.model(.translate("English"), retry: 0, thinking: false))
             }),
-            ("done-translated", { m in m.show(.done("Translated, inserted and copied")) }),
+            ("done-translated", { m in m.show(.done("Translated and inserted", detail: "142 chars · 3.1× faster")) }),
             ("refining", { m in m.show(.model(.refine, retry: 0, thinking: false)) }),
-            ("done", { m in m.show(.done("Inserted and copied")) }),
+            ("done", { m in m.show(.done("Inserted and copied", detail: "186 chars · 38s saved")) }),
             ("notice-warning", { m in m.show(.notice(.init(tone: .warning, title: "Inserted without polishing", detail: "No complete answer within 180 seconds."))) }),
             ("notice-error", { m in m.show(.notice(.init(tone: .error, title: "Couldn't transcribe", detail: "Doubao didn't accept the key."))) }),
             ("notice-info", { m in m.show(.notice(.init(tone: .info, title: "No speech detected", detail: nil))) }),

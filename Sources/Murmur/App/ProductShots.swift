@@ -130,27 +130,30 @@ private struct CapsuleGallery: View {
 
     private let states: [(String, HUDModel)] = [
         ("Listening", model { m in
-            m.startListening(); m.level = 0.55
+            m.startListening(polishEnabled: true); m.level = 0.55
             m.liveText = "Um, so for next week, I think we should ship the first draft by Wednesday"
         }),
         ("Dictate and translate", model { m in
-            m.startListening(translatingTo: "English"); m.level = 0.45
+            m.startListening(translatingTo: "English", polishEnabled: true); m.level = 0.45
             m.liveText = "可以的，周四我有空，不过能不能把电话改到四点？"
         }),
         ("Polishing", model { m in
+            m.pipeline = HUDModel.Pipeline(stages: [.speech, .polish], active: .polish, completed: [.speech])
             m.show(.model(.polish, retry: 0, thinking: false))
             m.liveText = "Next week: ship the first draft by Wednesday, have the design team review it on Thursday."
             m.waitingSince = Date().addingTimeInterval(-2)
         }),
         ("Translating", model { m in
+            m.pipeline = HUDModel.Pipeline(stages: [.speech, .polish, .translate], active: .translate,
+                                           completed: [.speech, .polish], targetLanguage: "English")
             m.show(.model(.translate("English"), retry: 0, thinking: false))
             m.liveText = "Sure, I'm free on Thursday, but could we move the call to 4:00?"
         }),
         ("Connection lost, still recording", model { m in
-            m.startListening(); m.level = 0.5; m.link = .reconnecting
+            m.startListening(polishEnabled: true); m.level = 0.5; m.link = .reconnecting
             m.liveText = "Quick update from the client call. They loved the new dashboard,"
         }),
-        ("Done", model { m in m.show(.done("Inserted and copied")) }),
+        ("Done", model { m in m.show(.done("Inserted and copied", detail: "148 chars · 3.1× faster")) }),
     ]
 
     var body: some View {

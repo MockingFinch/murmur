@@ -127,7 +127,7 @@ enum Films {
         let polished = "Next week: ship the first draft by Wednesday, have the design team review it on Thursday, and spend Friday polishing onboarding before it goes to QA."
         var f = Film(name: "dictate", duration: 12.6, window: .mail)
         f.caption(0.2, "Press ⌃X anywhere you type")
-        f.press(0.9, ["⌃", "X"]) { s, h in s.murmurActive = true; h.startListening() }
+        f.press(0.9, ["⌃", "X"]) { s, h in s.murmurActive = true; h.startListening(polishEnabled: true) }
         f.caption(1.6, "Just talk. Your words appear as you speak")
         f.speak(from: 1.2, to: 7.0, heard)
         f.press(7.5, ["⌃", "X"]) { s, h in s.murmurActive = false; h.show(.transcribing(retry: 0)) }
@@ -146,7 +146,7 @@ enum Films {
         let english = "Sure, I'm free on Thursday, but could we move the call to 4:00? I have another meeting until 3:30."
         var f = Film(name: "translate", duration: 13.0, window: .chat)
         f.caption(0.2, "Press ⌃⌘X to dictate and translate")
-        f.press(0.9, ["⌃", "⌘", "X"]) { s, h in s.murmurActive = true; h.startListening(translatingTo: "English") }
+        f.press(0.9, ["⌃", "⌘", "X"]) { s, h in s.murmurActive = true; h.startListening(translatingTo: "English", polishEnabled: true) }
         f.caption(1.6, "Speak Chinese…")
         f.speak(from: 1.2, to: 6.4, heard)
         f.press(6.9, ["⌃", "⌘", "X"]) { s, h in s.murmurActive = false; h.show(.transcribing(retry: 0)) }
@@ -275,6 +275,11 @@ struct Film {
     /// The model at work on `input`, its answer streaming in.
     mutating func answer(at: Double, job: HUDModel.Job, input: String, output: String, streamFor: Double) {
         cue(at) { _, h in
+            switch job {
+            case .polish: h.advancePipeline(completed: .speech, next: .polish)
+            case .translate: h.advancePipeline(completed: .polish, next: .translate)
+            case .refine: break
+            }
             h.preview = input
             h.liveText = ""
             h.show(.model(job, retry: 0, thinking: false))
