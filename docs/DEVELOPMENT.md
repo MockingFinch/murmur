@@ -105,6 +105,8 @@ The scripts, mock windows and wallpaper are in `Sources/Murmur/App/Films.swift`,
   - `Overlay/` is the capsule. `UI/` is the settings window.
   - `App/` is the menu bar, launch, and the development aids above.
 
+The capsule's glass animates its measured width and height around a fixed bottom-center anchor. Its content lays out separately, so a result can fade in while the outgoing transcript fades away. Busy and error feedback pulses the status icon inside the capsule. Settings pages scroll inside the resizable macOS window.
+
 ## How failures are handled
 
 What Murmur does when something goes wrong, in detail. The rule behind all of it: what the user said is never thrown away.
@@ -122,7 +124,7 @@ What Murmur does when something goes wrong, in detail. The rule behind all of it
 - If the text came back incomplete, or not at all, the recording stays, for **Transcribe Again** in the menu bar: it runs the recording through Doubao, polishing and translation again and inserts the result.
 - A recording cut off by a crash or a quit is offered at the next launch.
 - Pressing Esc while Murmur is listening cancels the session and discards the recording. Murmur registers Esc as a global hotkey only while listening, including during reconnection. The menu bar's **Cancel** also works after stopping and keeps the recording in that case.
-- When a recording is discarded, the capsule switches directly to a centered **Cancelled** confirmation, which fades out in place.
+- When a recording is discarded, the **Cancelled** confirmation fades into the contracting capsule and then fades out in place.
 - Recordings are kept for 7 days at most. Ones shorter than 0.3 seconds are discarded.
 
 **The model**

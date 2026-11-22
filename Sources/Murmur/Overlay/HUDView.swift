@@ -9,28 +9,16 @@ struct HUDView: View {
 
     static let canvas = CGSize(width: 680, height: 260)
 
-    private var cancelled: Bool { model.mode == .cancelled }
-
     var body: some View {
-        VStack(spacing: 0) {
-            Spacer(minLength: 0)
+        ZStack(alignment: .bottom) {
             if let mode = model.mode {
-                HUDCapsule(model: model, mode: mode, snapshot: snapshot)
-                    .id(cancelled)
-                    .transition(cancelled ? .opacity : AnyTransition(HUDTransition()))
+                HUDCapsule(model: model, mode: mode, resultOrigin: model.resultOrigin, snapshot: snapshot)
+                    .transition(mode == .cancelled ? .opacity : AnyTransition(HUDTransition()))
             }
         }
         .padding(.bottom, 34)
-        .frame(width: Self.canvas.width, height: Self.canvas.height)
+        .frame(width: Self.canvas.width, height: Self.canvas.height, alignment: .bottom)
         .animation(.spring(response: 0.44, dampingFraction: 0.8), value: model.mode == nil)
-        // Replace the recording in place. Springing between their sizes briefly
-        // repositions the outgoing transcript at the confirmation's origin.
-        .transaction(value: cancelled) { transaction in
-            if cancelled {
-                transaction.animation = nil
-                transaction.disablesAnimations = true
-            }
-        }
         .environment(\.colorScheme, .dark)
     }
 }
@@ -38,91 +26,64 @@ struct HUDView: View {
 private struct HUDCapsule: View {
     let model: HUDModel
     let mode: HUDModel.Mode
+    let resultOrigin: HUDModel.Mode?
     let snapshot: Bool
+    @State private var contentSize = CGSize.zero
 
-    private var line: (text: String, dim: Bool)? {
-        switch mode {
-        case .listening, .transcribing:
-            return model.liveText.isEmpty ? nil : (model.liveText, false)
-        case .model:
-            if !model.liveText.isEmpty { return (model.liveText, false) }
-            return model.preview.isEmpty ? nil : (model.preview, true)
-        default:
-            return nil
-        }
-    }
-
-    /// Wide enough for a comfortable line of text; never wider, whatever is said.
-    static let textWidth: CGFloat = 460
-
-    private var width: CGFloat {
-        switch mode {
-        case .listening:
-            guard line == nil else { return Self.textWidth }
-            return 214 + (model.target == nil ? 0 : 86) + (model.link == .live ? 0 : 118)
-        case .transcribing: return line == nil ? 214 : Self.textWidth
-        case .model: return Self.textWidth
-        case .done(let title): return CGFloat(min(320, 92 + title.count * 8))
-        case .notice(let n): return n.detail == nil ? CGFloat(min(380, 100 + n.title.count * 8)) : 420
-        case .cancelled: return 150
-        }
-    }
-
+    private var showingResult: Bool { mode.isResult }
+    private var activeMode: HUDModel.Mode { resultOrigin ?? mode }
+    private var resultMode: HUDModel.Mode { showingResult ? mode : .cancelled }
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 23, style: .continuous) }
 
-    /// Changes worth a spring.
-    private var layoutKey: String { "\(kind)|\(line == nil)" }
-
-    private var kind: String {
-        switch mode {
-        case .listening: return "listening"
-        case .transcribing: return "transcribing"
-        case .model: return "model"
-        case .done: return "done"
-        case .notice: return "notice"
-        case .cancelled: return "cancelled"
-        }
-    }
-
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            if let line {
-                Transcript(text: line.text, dim: line.dim)
-                    .frame(width: Self.textWidth - 36)
-                    .padding(.horizontal, 18)
-                    .padding(.top, 13)
-                    .transition(.asymmetric(insertion: .opacity.combined(with: .offset(y: 8)), removal: .opacity))
-            }
-            HStack(spacing: 11) {
-                leading
-                    .frame(width: 22, height: 22)
-                center
-                    .frame(maxWidth: .infinity, alignment: .leading)
-                trailing
-            }
-            .padding(.horizontal, 14)
-            // A notice with two lines of detail grows; nothing else does.
-            .frame(minHeight: 46)
+        CapsuleLayout(size: contentSize, showingResult: showingResult) {
+            HUDContents(model: model, mode: activeMode)
+                .onGeometryChange(for: CGSize?.self) { showingResult ? nil : $0.size } action: { size in
+                    resize(to: size, animation: .spring(response: 0.42, dampingFraction: 0.8))
+                }
+                .opacity(showingResult ? 0 : 1)
+                .accessibilityHidden(showingResult)
+                .animation(.easeOut(duration: 0.1), value: showingResult)
+            result
+                .opacity(showingResult ? 1 : 0)
+                .accessibilityHidden(!showingResult)
+                .animation(.easeInOut(duration: 0.16).delay(showingResult ? 0.12 : 0), value: showingResult)
         }
-        .frame(width: width)
-        .background(glow)
+        .background {
+            ZStack {
+                glow(for: activeMode).opacity(showingResult ? 0 : 1)
+                glow(for: resultMode).opacity(showingResult ? 1 : 0)
+            }
+            .animation(.easeOut(duration: 0.18), value: showingResult)
+        }
         .background(surface)
         .clipShape(shape)
         .overlay(shape.strokeBorder(LinearGradient(colors: [.white.opacity(0.24), .white.opacity(0.05)], startPoint: .top, endPoint: .bottom), lineWidth: 0.6))
         .modifier(SoftShadow(cornerRadius: 23, opacity: 0.32, radius: 22, y: 12))
-        .keyframeAnimator(initialValue: CGFloat(0), trigger: model.shakes) { content, x in
-            content.offset(x: x)
-        } keyframes: { _ in
-            KeyframeTrack {
-                CubicKeyframe(-9, duration: 0.06)
-                CubicKeyframe(8, duration: 0.07)
-                CubicKeyframe(-5, duration: 0.07)
-                CubicKeyframe(3, duration: 0.06)
-                CubicKeyframe(0, duration: 0.07)
-            }
+    }
+
+    private var result: some View {
+        ZStack(alignment: .bottom) {
+            HUDContents(model: model, mode: resultMode)
+                .onGeometryChange(for: CGSize?.self) { showingResult ? $0.size : nil } action: { size in
+                    resize(to: size, animation: .timingCurve(0.36, 0, 0.2, 1, duration: 0.3).delay(0.045))
+                }
+                .id(resultMode)
+                .transition(.asymmetric(
+                    insertion: .opacity.animation(.easeInOut(duration: 0.16).delay(0.12)),
+                    removal: .opacity.animation(.easeOut(duration: 0.1))
+                ))
         }
-        .animation(.spring(response: 0.42, dampingFraction: 0.8), value: layoutKey)
-        .animation(.spring(response: 0.42, dampingFraction: 0.8), value: width)
+        .animation(resultOrigin?.isResult == true ? .easeOut(duration: 0.16) : nil, value: resultMode)
+    }
+
+    private func resize(to size: CGSize?, animation: Animation) {
+        guard let size, size != contentSize else { return }
+        if contentSize == .zero {
+            contentSize = size
+        } else {
+            withAnimation(animation) { contentSize = size }
+        }
     }
 
     // MARK: Surface
@@ -138,7 +99,7 @@ private struct HUDCapsule: View {
 
     /// A light under the glass: warm and following the voice while
     /// listening, cool and breathing while the model works.
-    @ViewBuilder private var glow: some View {
+    @ViewBuilder private func glow(for mode: HUDModel.Mode) -> some View {
         switch mode {
         case .listening:
             TimelineView(.animation) { _ in
@@ -169,6 +130,82 @@ private struct HUDCapsule: View {
         default:
             Color.clear
         }
+    }
+}
+
+private struct HUDContents: View {
+    let model: HUDModel
+    let mode: HUDModel.Mode
+
+    private var line: (text: String, dim: Bool)? {
+        switch mode {
+        case .listening, .transcribing:
+            return model.liveText.isEmpty ? nil : (model.liveText, false)
+        case .model:
+            if !model.liveText.isEmpty { return (model.liveText, false) }
+            return model.preview.isEmpty ? nil : (model.preview, true)
+        default:
+            return nil
+        }
+    }
+
+    /// Wide enough for a comfortable line of text; never wider, whatever is said.
+    static let textWidth: CGFloat = 460
+    private static let cancelledWidth: CGFloat = 150
+    private static let rowHeight: CGFloat = 46
+
+    private var width: CGFloat {
+        switch mode {
+        case .listening:
+            guard line == nil else { return Self.textWidth }
+            return 214 + (model.target == nil ? 0 : 86) + (model.link == .live ? 0 : 118)
+        case .transcribing: return line == nil ? 214 : Self.textWidth
+        case .model: return Self.textWidth
+        case .done(let title): return CGFloat(min(320, 92 + title.count * 8))
+        case .notice(let n): return n.detail == nil ? CGFloat(min(380, 100 + n.title.count * 8)) : 420
+        case .cancelled: return Self.cancelledWidth
+        }
+    }
+
+    /// Changes worth a spring.
+    private var layoutKey: String { "\(kind)|\(line == nil)" }
+
+    private var kind: String {
+        switch mode {
+        case .listening: return "listening"
+        case .transcribing: return "transcribing"
+        case .model: return "model"
+        case .done: return "done"
+        case .notice: return "notice"
+        case .cancelled: return "cancelled"
+        }
+    }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            if let line {
+                Transcript(text: line.text, dim: line.dim)
+                    .frame(width: Self.textWidth - 36)
+                    .padding(.horizontal, 18)
+                    .padding(.top, 13)
+                    .transition(.asymmetric(
+                        insertion: .opacity.combined(with: .offset(y: 8)).animation(.easeOut(duration: 0.2).delay(0.13)),
+                        removal: .opacity
+                    ))
+            }
+            HStack(spacing: 11) {
+                leading
+                    .frame(width: 22, height: 22)
+                center
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                trailing
+            }
+            .padding(.horizontal, 14)
+            // A notice with two lines of detail grows; nothing else does.
+            .frame(minHeight: Self.rowHeight)
+        }
+        .animation(.spring(response: 0.42, dampingFraction: 0.8), value: layoutKey)
+        .frame(width: width)
     }
 
     // MARK: Parts
@@ -202,10 +239,17 @@ private struct HUDCapsule: View {
                 Image(systemName: "xmark.circle.fill")
                     .font(.system(size: 16, weight: .semibold))
                     .foregroundStyle(.white.opacity(0.55))
-                    .transition(.scale.combined(with: .opacity))
             }
         }
         .animation(.spring(response: 0.35, dampingFraction: 0.7), value: kind)
+        .keyframeAnimator(initialValue: CGFloat(1), trigger: model.attentionPulses) { icon, scale in
+            icon.scaleEffect(scale)
+        } keyframes: { _ in
+            KeyframeTrack {
+                CubicKeyframe(1.22, duration: 0.11)
+                CubicKeyframe(1, duration: 0.2)
+            }
+        }
     }
 
     @ViewBuilder private var center: some View {
@@ -247,7 +291,6 @@ private struct HUDCapsule: View {
             Text("Cancelled")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
                 .foregroundStyle(.white.opacity(0.6))
-                .transition(.blurReplace)
         }
     }
 
@@ -291,6 +334,28 @@ private struct HUDCapsule: View {
         case .info: return .white.opacity(0.7)
         case .warning: return Brand.amber
         case .error: return Brand.coral
+        }
+    }
+}
+
+/// Animates the glass size around a shared bottom center while each layer
+/// keeps its own layout, even if the transcript is still changing size.
+private struct CapsuleLayout: Layout {
+    var size: CGSize
+    var showingResult: Bool
+
+    var animatableData: AnimatablePair<CGFloat, CGFloat> {
+        get { AnimatablePair(size.width, size.height) }
+        set { size = CGSize(width: newValue.first, height: newValue.second) }
+    }
+
+    func sizeThatFits(proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) -> CGSize {
+        size == .zero ? subviews[showingResult ? 1 : 0].sizeThatFits(.unspecified) : size
+    }
+
+    func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        for subview in subviews {
+            subview.place(at: CGPoint(x: bounds.midX, y: bounds.maxY), anchor: .bottom, proposal: .unspecified)
         }
     }
 }

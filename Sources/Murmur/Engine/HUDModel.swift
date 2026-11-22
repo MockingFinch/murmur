@@ -5,7 +5,7 @@ import MurmurCore
 /// What the floating capsule shows.
 @MainActor @Observable
 final class HUDModel {
-    enum Mode: Equatable {
+    enum Mode: Hashable {
         case listening
         /// Waiting for Doubao's complete text; `retry` counts connections
         /// in a row that failed.
@@ -16,9 +16,16 @@ final class HUDModel {
         case done(String)
         case notice(Notice)
         case cancelled
+
+        var isResult: Bool {
+            switch self {
+            case .done, .notice, .cancelled: return true
+            case .listening, .transcribing, .model: return false
+            }
+        }
     }
 
-    enum Job: Equatable {
+    enum Job: Hashable {
         case polish, refine
         /// Into the named language.
         case translate(String)
@@ -33,8 +40,8 @@ final class HUDModel {
         case recordingOnly
     }
 
-    struct Notice: Equatable {
-        enum Tone { case info, warning, error }
+    struct Notice: Hashable {
+        enum Tone: Hashable { case info, warning, error }
         var tone: Tone
         var title: String
         var detail: String?
@@ -42,8 +49,14 @@ final class HUDModel {
 
     /// nil: hidden.
     var mode: Mode? {
-        didSet { if mode != oldValue { onModeChange?(mode) } }
+        didSet {
+            guard mode != oldValue else { return }
+            resultOrigin = mode?.isResult == true ? oldValue : nil
+            onModeChange?(mode)
+        }
     }
+    /// The session content that fades as a result appears.
+    private(set) var resultOrigin: Mode?
     /// Live words: Doubao's partial text, then the model's answer as it streams.
     var liveText = ""
     /// The text the model is working on, shown dimmed until its answer starts.
@@ -52,8 +65,8 @@ final class HUDModel {
     /// The language a translating session will end in; nil when it won't translate.
     var target: String?
     var link = Link.live
-    /// Bumped to shake the capsule ("busy", errors).
-    var shakes = 0
+    /// Increments to pulse the status icon for a busy shortcut or an error.
+    private(set) var attentionPulses = 0
 
     /// Loudness for the waveform, read every frame (not observed, to keep
     /// the rest of the capsule from re-rendering 50 times a second).
@@ -100,11 +113,11 @@ final class HUDModel {
     func finish(_ mode: Mode) {
         dismissal?.cancel()
         self.mode = mode
-        if case .notice(let n) = mode, n.tone == .error { shakes += 1 }
+        if case .notice(let n) = mode, n.tone == .error { nudge() }
         let hold: Double
         switch mode {
         case .done: hold = 1.1
-        case .cancelled: hold = 0.45
+        case .cancelled: hold = 0.58
         case .notice(let n): hold = n.detail == nil ? 2.2 : ((n.detail?.count ?? 0) > 64 ? 6 : 4.2)
         default: hold = 1.5
         }
@@ -121,7 +134,7 @@ final class HUDModel {
         level = 0
     }
 
-    func nudge() { shakes += 1 }
+    func nudge() { attentionPulses += 1 }
 
     func apply(_ progress: PolishProgress) {
         guard case .model(let job, let retry, let thinking) = mode else { return }
