@@ -97,6 +97,8 @@ struct RootView: View {
             ForEach(Array(Page.allCases.enumerated()), id: \.element.id) { index, page in
                 Button("") { withAnimation(Motion.snappy) { navigator.page = page } }
                     .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                    .focusable(false)
+                    .focusEffectDisabled()
                     .opacity(0)
                     .frame(width: 0, height: 0)
                     .accessibilityHidden(true)
@@ -167,6 +169,7 @@ private struct Sidebar: View {
         }
         .frame(minWidth: 190, idealWidth: 208, maxWidth: .infinity, alignment: .leading)
         .focusable()
+        .focusEffectDisabled()
         .onKeyPress(.downArrow) { step(1) }
         .onKeyPress(.upArrow) { step(-1) }
     }
