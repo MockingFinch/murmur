@@ -9,17 +9,28 @@ struct HUDView: View {
 
     static let canvas = CGSize(width: 680, height: 260)
 
+    private var cancelled: Bool { model.mode == .cancelled }
+
     var body: some View {
         VStack(spacing: 0) {
             Spacer(minLength: 0)
             if let mode = model.mode {
                 HUDCapsule(model: model, mode: mode, snapshot: snapshot)
-                    .transition(HUDTransition())
+                    .id(cancelled)
+                    .transition(cancelled ? .opacity : AnyTransition(HUDTransition()))
             }
         }
         .padding(.bottom, 34)
         .frame(width: Self.canvas.width, height: Self.canvas.height)
         .animation(.spring(response: 0.44, dampingFraction: 0.8), value: model.mode == nil)
+        // Replace the recording in place. Springing between their sizes briefly
+        // repositions the outgoing transcript at the confirmation's origin.
+        .transaction(value: cancelled) { transaction in
+            if cancelled {
+                transaction.animation = nil
+                transaction.disablesAnimations = true
+            }
+        }
         .environment(\.colorScheme, .dark)
     }
 }
