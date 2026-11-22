@@ -6,19 +6,29 @@ import MurmurCore
 struct HUDView: View {
     let model: HUDModel
     var snapshot = false
+    var fixedPosition: HUDPosition? = nil
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    private let settings = AppSettings.shared
 
     static let canvas = CGSize(width: 680, height: 260)
 
+    private var position: HUDPosition { fixedPosition ?? (snapshot ? .bottom : settings.hudPosition) }
+
     var body: some View {
-        ZStack(alignment: .bottom) {
+        let isTop = position == .top
+        ZStack(alignment: isTop ? .top : .bottom) {
             if let mode = model.mode {
-                HUDCapsule(model: model, mode: mode, resultOrigin: model.resultOrigin, snapshot: snapshot)
-                    .transition(mode == .cancelled ? .opacity : AnyTransition(HUDTransition()))
+                HUDCapsule(model: model, mode: mode, resultOrigin: model.resultOrigin,
+                           position: position, snapshot: snapshot)
+                    .transition(mode == .cancelled || reduceMotion
+                                ? .opacity
+                                : AnyTransition(HUDTransition(fromTop: isTop)))
             }
         }
-        .padding(.bottom, 34)
-        .frame(width: Self.canvas.width, height: Self.canvas.height, alignment: .bottom)
-        .animation(.spring(response: 0.44, dampingFraction: 0.8), value: model.mode == nil)
+        .padding(isTop ? .top : .bottom, isTop ? 18 : 34)
+        .frame(width: Self.canvas.width, height: Self.canvas.height, alignment: isTop ? .top : .bottom)
+        .animation(reduceMotion ? .easeInOut(duration: 0.16) : .spring(response: 0.44, dampingFraction: 0.8),
+                   value: model.mode == nil)
         .environment(\.colorScheme, .dark)
     }
 }
@@ -27,19 +37,22 @@ private struct HUDCapsule: View {
     let model: HUDModel
     let mode: HUDModel.Mode
     let resultOrigin: HUDModel.Mode?
+    let position: HUDPosition
     let snapshot: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var contentSize = CGSize.zero
 
     private var showingResult: Bool { mode.isResult }
     private var activeMode: HUDModel.Mode { resultOrigin ?? mode }
     private var resultMode: HUDModel.Mode { showingResult ? mode : .cancelled }
     private var shape: RoundedRectangle { RoundedRectangle(cornerRadius: 23, style: .continuous) }
+    private var isTop: Bool { position == .top }
 
     var body: some View {
-        CapsuleLayout(size: contentSize, showingResult: showingResult) {
+        CapsuleLayout(size: contentSize, showingResult: showingResult, anchorTop: isTop) {
             HUDContents(model: model, mode: activeMode)
                 .onGeometryChange(for: CGSize?.self) { showingResult ? nil : $0.size } action: { size in
-                    resize(to: size, animation: .spring(response: 0.42, dampingFraction: 0.8))
+                    resize(to: size, animation: reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.8))
                 }
                 .opacity(showingResult ? 0 : 1)
                 .accessibilityHidden(showingResult)
@@ -63,10 +76,10 @@ private struct HUDCapsule: View {
     }
 
     private var result: some View {
-        ZStack(alignment: .bottom) {
+        ZStack(alignment: isTop ? .top : .bottom) {
             HUDContents(model: model, mode: resultMode)
                 .onGeometryChange(for: CGSize?.self) { showingResult ? $0.size : nil } action: { size in
-                    resize(to: size, animation: .timingCurve(0.36, 0, 0.2, 1, duration: 0.3).delay(0.045))
+                    resize(to: size, animation: reduceMotion ? .easeOut(duration: 0.15) : .timingCurve(0.36, 0, 0.2, 1, duration: 0.3).delay(0.045))
                 }
                 .id(resultMode)
                 .transition(.asymmetric(
@@ -101,9 +114,9 @@ private struct HUDCapsule: View {
     /// listening, cool and breathing while the model works.
     @ViewBuilder private func glow(for mode: HUDModel.Mode) -> some View {
         switch mode {
-        case .listening:
-            TimelineView(.animation) { _ in
-                let level = Double(model.level)
+        case .arming, .listening:
+            TimelineView(.animation(paused: reduceMotion)) { _ in
+                let level = reduceMotion ? 0.25 : Double(model.level)
                 ZStack {
                     Aura(color: Color(hex: 0xFF7A59), strength: 0.18 + level * 0.42)
                         .frame(width: 240, height: 84)
@@ -114,8 +127,8 @@ private struct HUDCapsule: View {
                 }
             }
         case .model, .transcribing:
-            TimelineView(.animation) { ctx in
-                let t = ctx.date.timeIntervalSinceReferenceDate
+            TimelineView(.animation(paused: reduceMotion)) { ctx in
+                let t = reduceMotion ? 0.0 : ctx.date.timeIntervalSinceReferenceDate
                 ZStack {
                     Aura(color: Brand.violet, strength: 0.3 + 0.1 * sin(t * 2.2))
                         .frame(width: 260, height: 90)
@@ -136,6 +149,10 @@ private struct HUDCapsule: View {
 private struct HUDContents: View {
     let model: HUDModel
     let mode: HUDModel.Mode
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    /// Holds the preview's height as a floor while model tokens stream in,
+    /// avoiding a 3-line -> 1-line -> 3-line accordion bounce.
+    @State private var jobTranscriptFloor: CGFloat = 0
 
     private var line: (text: String, dim: Bool)? {
         switch mode {
@@ -149,29 +166,49 @@ private struct HUDContents: View {
         }
     }
 
+    private var modelJob: HUDModel.Job? {
+        if case .model(let job, _, _) = mode { return job }
+        return nil
+    }
+
+    private var hasStatusBadge: Bool {
+        model.escapeConfirm || model.quietCountdown != nil || model.link != .live
+    }
+
     /// Wide enough for a comfortable line of text; never wider, whatever is said.
     static let textWidth: CGFloat = 460
     private static let cancelledWidth: CGFloat = 150
     private static let rowHeight: CGFloat = 46
 
-    private var width: CGFloat {
+    /// Fixed width for active and multi-line notice modes; nil lets compact
+    /// single-line results size cleanly to their label without truncation.
+    private var fixedWidth: CGFloat? {
         switch mode {
+        case .arming:
+            return 214 + (model.target == nil ? 0 : 104)
         case .listening:
             guard line == nil else { return Self.textWidth }
-            return 214 + (model.target == nil ? 0 : 86) + (model.link == .live ? 0 : 118)
-        case .transcribing: return line == nil ? 214 : Self.textWidth
-        case .model: return Self.textWidth
-        case .done(let title): return CGFloat(min(320, 92 + title.count * 8))
-        case .notice(let n): return n.detail == nil ? CGFloat(min(380, 100 + n.title.count * 8)) : 420
-        case .cancelled: return Self.cancelledWidth
+            let extra = (model.target == nil ? 0 : 104) + (hasStatusBadge ? 148 : 0)
+            return min(Self.textWidth, 214 + CGFloat(extra))
+        case .transcribing:
+            return line == nil ? 214 : Self.textWidth
+        case .model:
+            return Self.textWidth
+        case .done:
+            return nil
+        case .notice(let n):
+            return n.detail == nil ? nil : 440
+        case .cancelled:
+            return Self.cancelledWidth
         }
     }
 
     /// Changes worth a spring.
-    private var layoutKey: String { "\(kind)|\(line == nil)" }
+    private var layoutKey: String { "\(kind)|\(line == nil)|\(hasStatusBadge)" }
 
     private var kind: String {
         switch mode {
+        case .arming: return "arming"
         case .listening: return "listening"
         case .transcribing: return "transcribing"
         case .model: return "model"
@@ -181,47 +218,61 @@ private struct HUDContents: View {
         }
     }
 
+    private var swapTransition: AnyTransition {
+        reduceMotion ? .opacity : AnyTransition(.blurReplace)
+    }
+
     var body: some View {
         VStack(alignment: .leading, spacing: 0) {
             if let line {
-                Transcript(text: line.text, dim: line.dim)
+                Transcript(text: line.text, dim: line.dim, minHeight: modelJob != nil ? jobTranscriptFloor : 0)
                     .frame(width: Self.textWidth - 36)
+                    .onGeometryChange(for: CGFloat.self) { $0.size.height } action: { h in
+                        if modelJob != nil, h > jobTranscriptFloor {
+                            jobTranscriptFloor = h
+                        }
+                    }
                     .padding(.horizontal, 18)
                     .padding(.top, 13)
-                    .transition(.asymmetric(
-                        insertion: .opacity.combined(with: .offset(y: 8)).animation(.easeOut(duration: 0.2).delay(0.13)),
-                        removal: .opacity
-                    ))
+                    .transition(reduceMotion
+                                ? .opacity
+                                : .asymmetric(
+                                    insertion: .opacity.combined(with: .offset(y: 8)).animation(.easeOut(duration: 0.2).delay(0.13)),
+                                    removal: .opacity
+                                ))
             }
             HStack(spacing: 11) {
                 leading
                     .frame(width: 22, height: 22)
                 center
-                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .frame(maxWidth: fixedWidth == nil ? nil : .infinity, alignment: .leading)
                 trailing
             }
             .padding(.horizontal, 14)
-            // A notice with two lines of detail grows; nothing else does.
+            // A notice with multiple lines of detail grows; nothing else does.
             .frame(minHeight: Self.rowHeight)
         }
-        .animation(.spring(response: 0.42, dampingFraction: 0.8), value: layoutKey)
-        .frame(width: width)
+        .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.42, dampingFraction: 0.8), value: layoutKey)
+        .frame(width: fixedWidth)
+        .frame(minWidth: fixedWidth == nil ? 160 : nil, maxWidth: fixedWidth == nil ? 420 : nil)
+        .onChange(of: modelJob) { jobTranscriptFloor = 0 }
     }
 
     // MARK: Parts
 
     @ViewBuilder private var leading: some View {
+        let reduce = reduceMotion
         ZStack {
             switch mode {
-            case .listening:
-                RecordingDot(model: model).transition(.scale.combined(with: .opacity))
+            case .arming, .listening:
+                RecordingDot(model: model, calm: mode == .arming).transition(.scale.combined(with: .opacity))
             case .transcribing:
                 ArcSpinner().transition(.scale.combined(with: .opacity))
             case .model(let job, _, _):
                 Image(systemName: job == .polish || job == .refine ? "sparkles" : "translate")
                     .font(.system(size: 15, weight: .semibold))
                     .foregroundStyle(Brand.polish)
-                    .symbolEffect(.pulse, options: .repeating)
+                    .symbolEffect(.pulse, options: .repeating, isActive: !reduce)
                     .contentTransition(.symbolEffect(.replace))
                     .transition(.scale.combined(with: .opacity))
             case .done:
@@ -241,9 +292,9 @@ private struct HUDContents: View {
                     .foregroundStyle(.white.opacity(0.55))
             }
         }
-        .animation(.spring(response: 0.35, dampingFraction: 0.7), value: kind)
+        .animation(reduce ? .easeOut(duration: 0.12) : .spring(response: 0.35, dampingFraction: 0.7), value: kind)
         .keyframeAnimator(initialValue: CGFloat(1), trigger: model.attentionPulses) { icon, scale in
-            icon.scaleEffect(scale)
+            icon.scaleEffect(reduce ? 1 : scale)
         } keyframes: { _ in
             KeyframeTrack {
                 CubicKeyframe(1.22, duration: 0.11)
@@ -254,6 +305,11 @@ private struct HUDContents: View {
 
     @ViewBuilder private var center: some View {
         switch mode {
+        case .arming:
+            Waveform(model: model, settling: true)
+                .frame(height: 24)
+                .opacity(0.75)
+                .transition(.opacity)
         case .listening:
             Waveform(model: model, settling: false)
                 .frame(height: 26)
@@ -263,30 +319,34 @@ private struct HUDContents: View {
                 Shimmering(text: retry > 0 ? "Reconnecting · \(retry)" : "Transcribing")
                 Waveform(model: model, settling: true).frame(width: 46, height: 18)
             }
-            .transition(.blurReplace)
+            .transition(swapTransition)
         case .model(let job, let retry, let thinking):
             Shimmering(text: modelLabel(job, retry, thinking))
                 .id(modelLabel(job, retry, thinking))
-                .transition(.blurReplace)
+                .transition(swapTransition)
         case .done(let title):
             Text(title)
                 .font(.system(size: 13.5, weight: .semibold, design: .rounded))
                 .foregroundStyle(.white)
-                .transition(.blurReplace)
+                .lineLimit(1)
+                .fixedSize(horizontal: true, vertical: false)
+                .transition(swapTransition)
         case .notice(let n):
             VStack(alignment: .leading, spacing: 2) {
                 Text(n.title)
                     .font(.system(size: 13, weight: .semibold, design: .rounded))
                     .foregroundStyle(.white)
+                    .fixedSize(horizontal: n.detail == nil, vertical: true)
                 if let detail = n.detail {
                     Text(detail)
                         .font(.system(size: 11.5))
-                        .foregroundStyle(.white.opacity(0.62))
-                        .lineLimit(2)
+                        .foregroundStyle(.white.opacity(0.66))
+                        .lineLimit(4)
+                        .fixedSize(horizontal: false, vertical: true)
                 }
             }
-            .padding(.vertical, n.detail == nil ? 0 : 6)
-            .transition(.blurReplace)
+            .padding(.vertical, n.detail == nil ? 0 : 7)
+            .transition(swapTransition)
         case .cancelled:
             Text("Cancelled")
                 .font(.system(size: 13, weight: .medium, design: .rounded))
@@ -295,13 +355,28 @@ private struct HUDContents: View {
     }
 
     @ViewBuilder private var trailing: some View {
-        if case .listening = mode {
+        if case .arming = mode {
+            if let target = model.target {
+                TargetBadge(language: target)
+                    .fixedSize()
+                    .transition(.opacity)
+            }
+        } else if case .listening = mode {
             HStack(spacing: 8) {
-                if model.link != .live { LinkBadge(link: model.link).transition(.blurReplace) }
+                if model.escapeConfirm {
+                    AlertBadge(symbol: "xmark.circle", text: "Esc again to discard", pulse: false)
+                        .transition(swapTransition)
+                } else if let secs = model.quietCountdown {
+                    AlertBadge(symbol: "timer", text: "Stopping in \(secs)s", pulse: false)
+                        .transition(swapTransition)
+                } else if model.link != .live {
+                    LinkBadge(link: model.link).transition(swapTransition)
+                }
                 if let target = model.target { TargetBadge(language: target) }
                 ElapsedLabel(since: model.startedAt, limit: DictationEngine.maxRecording)
             }
-            .animation(.spring(response: 0.35, dampingFraction: 0.8), value: model.link)
+            .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 0.8),
+                       value: "\(model.link)|\(model.escapeConfirm)|\(model.quietCountdown ?? -1)")
             // The waveform gives way; the time and the language never do.
             .fixedSize()
             .transition(.opacity)
@@ -338,11 +413,12 @@ private struct HUDContents: View {
     }
 }
 
-/// Animates the glass size around a shared bottom center while each layer
-/// keeps its own layout, even if the transcript is still changing size.
+/// Animates the glass size around a shared horizontal center (anchored at the
+/// bottom or top edge) while each layer keeps its own layout.
 private struct CapsuleLayout: Layout {
     var size: CGSize
     var showingResult: Bool
+    var anchorTop: Bool
 
     var animatableData: AnimatablePair<CGFloat, CGFloat> {
         get { AnimatablePair(size.width, size.height) }
@@ -354,8 +430,10 @@ private struct CapsuleLayout: Layout {
     }
 
     func placeSubviews(in bounds: CGRect, proposal: ProposedViewSize, subviews: Subviews, cache: inout ()) {
+        let point = CGPoint(x: bounds.midX, y: anchorTop ? bounds.minY : bounds.maxY)
+        let anchor: UnitPoint = anchorTop ? .top : .bottom
         for subview in subviews {
-            subview.place(at: CGPoint(x: bounds.midX, y: bounds.maxY), anchor: .bottom, proposal: .unspecified)
+            subview.place(at: point, anchor: anchor, proposal: .unspecified)
         }
     }
 }
@@ -369,6 +447,7 @@ private struct CapsuleLayout: Layout {
 private struct Transcript: View {
     let text: String
     let dim: Bool
+    var minHeight: CGFloat = 0
     @State private var overflowing = false
 
     static let maxLines: CGFloat = 3
@@ -386,6 +465,7 @@ private struct Transcript: View {
 
     var body: some View {
         let maxHeight = Self.maxHeight
+        let clampedFloor = min(minHeight, maxHeight)
         Text(shown)
             .font(Self.font)
             .lineSpacing(Self.spacing)
@@ -396,7 +476,7 @@ private struct Transcript: View {
             // Asked for its ideal height, the frame answers with the text's
             // own height, capped at three lines; offered more room, it takes
             // none of it. Overflow stays pinned to the bottom and is clipped.
-            .frame(maxHeight: maxHeight, alignment: .bottom)
+            .frame(minHeight: clampedFloor, maxHeight: maxHeight, alignment: overflowing ? .bottom : .topLeading)
             .fixedSize(horizontal: false, vertical: true)
             .clipped()
             .mask {
@@ -442,18 +522,21 @@ private struct TargetBadge: View {
     }
 }
 
-/// The stream to Doubao isn't live. Either way the recording goes on, so
-/// the user can keep talking.
-private struct LinkBadge: View {
-    let link: HUDModel.Link
+/// An amber status pill inside the listening bar (quiet countdown or Esc guard).
+private struct AlertBadge: View {
+    let symbol: String
+    let text: String
+    let pulse: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         HStack(spacing: 4) {
-            Image(systemName: link == .reconnecting ? "wifi.exclamationmark" : "record.circle")
+            Image(systemName: symbol)
                 .font(.system(size: 10, weight: .semibold))
-                .symbolEffect(.pulse, options: .repeating, isActive: link == .reconnecting)
-            Text(link == .reconnecting ? "Reconnecting" : "Recording only")
+                .symbolEffect(.pulse, options: .repeating, isActive: pulse && !reduceMotion)
+            Text(text)
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .monospacedDigit()
                 .fixedSize()
         }
         .foregroundStyle(Brand.amber)
@@ -461,42 +544,63 @@ private struct LinkBadge: View {
         .padding(.vertical, 3)
         .background(Capsule().fill(Brand.amber.opacity(0.14)))
         .overlay(Capsule().strokeBorder(Brand.amber.opacity(0.28), lineWidth: 0.5))
+    }
+}
+
+/// The stream to Doubao isn't live. Either way the recording goes on, so
+/// the user can keep talking.
+private struct LinkBadge: View {
+    let link: HUDModel.Link
+
+    var body: some View {
+        AlertBadge(
+            symbol: link == .reconnecting ? "wifi.exclamationmark" : "record.circle",
+            text: link == .reconnecting ? "Reconnecting" : "Recording only",
+            pulse: link == .reconnecting
+        )
         .accessibilityLabel(link == .reconnecting ? "Reconnecting to Doubao; keep talking" : "Recording only; Doubao refused")
     }
 }
 
 private struct RecordingDot: View {
     let model: HUDModel
+    var calm = false
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
-        TimelineView(.animation) { ctx in
-            let t = ctx.date.timeIntervalSinceReferenceDate
+        TimelineView(.animation(paused: reduceMotion || calm)) { ctx in
+            let t = (reduceMotion || calm) ? 0.0 : ctx.date.timeIntervalSinceReferenceDate
             let pulse = (t.truncatingRemainder(dividingBy: 1.4)) / 1.4
-            let level = CGFloat(model.level)
+            let level = (reduceMotion || calm) ? CGFloat(0) : CGFloat(model.level)
             ZStack {
-                Circle()
-                    .fill(Brand.coral)
-                    .frame(width: 10, height: 10)
-                    .scaleEffect(1 + pulse * 1.4)
-                    .opacity(0.55 * (1 - pulse))
+                if !reduceMotion && !calm {
+                    Circle()
+                        .fill(Brand.coral)
+                        .frame(width: 10, height: 10)
+                        .scaleEffect(1 + pulse * 1.4)
+                        .opacity(0.55 * (1 - pulse))
+                }
                 Circle()
                     .fill(Brand.voice)
                     .frame(width: 10, height: 10)
+                    .opacity(calm ? 0.6 : 1)
                     .scaleEffect(1 + level * 0.3)
-                    .shadow(color: Brand.coral.opacity(0.9), radius: 3 + level * 5)
+                    .shadow(color: Brand.coral.opacity(calm ? 0.45 : 0.9), radius: 3 + level * 5)
             }
         }
     }
 }
 
 private struct ArcSpinner: View {
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+
     var body: some View {
-        TimelineView(.animation) { ctx in
-            let t = ctx.date.timeIntervalSinceReferenceDate
+        TimelineView(.animation(paused: reduceMotion)) { ctx in
+            let t = reduceMotion ? 0.0 : ctx.date.timeIntervalSinceReferenceDate
             ZStack {
                 Circle().stroke(.white.opacity(0.14), lineWidth: 2)
                 Circle()
-                    .trim(from: 0, to: 0.3 + 0.12 * sin(t * 3))
+                    .trim(from: 0, to: reduceMotion ? 0.35 : 0.3 + 0.12 * sin(t * 3))
                     .stroke(.white.opacity(0.92), style: StrokeStyle(lineWidth: 2, lineCap: .round))
                     .rotationEffect(.degrees(t * 400))
             }
@@ -508,24 +612,31 @@ private struct ArcSpinner: View {
 /// A word with light sweeping across it.
 private struct Shimmering: View {
     let text: String
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
 
     var body: some View {
         let label = Text(text).font(.system(size: 13.5, weight: .semibold, design: .rounded))
-        label
-            .foregroundStyle(.white.opacity(0.55))
-            .overlay {
-                TimelineView(.animation) { ctx in
-                    let t = ctx.date.timeIntervalSinceReferenceDate
-                    let phase = (t.truncatingRemainder(dividingBy: 1.8)) / 1.8
-                    GeometryReader { geo in
-                        LinearGradient(colors: [.clear, .white, .clear], startPoint: .leading, endPoint: .trailing)
-                            .frame(width: geo.size.width * 0.55)
-                            .offset(x: -geo.size.width * 0.55 + phase * geo.size.width * 1.9)
+        if reduceMotion {
+            label
+                .foregroundStyle(.white.opacity(0.9))
+                .fixedSize()
+        } else {
+            label
+                .foregroundStyle(.white.opacity(0.55))
+                .overlay {
+                    TimelineView(.animation) { ctx in
+                        let t = ctx.date.timeIntervalSinceReferenceDate
+                        let phase = (t.truncatingRemainder(dividingBy: 1.8)) / 1.8
+                        GeometryReader { geo in
+                            LinearGradient(colors: [.clear, .white, .clear], startPoint: .leading, endPoint: .trailing)
+                                .frame(width: geo.size.width * 0.55)
+                                .offset(x: -geo.size.width * 0.55 + phase * geo.size.width * 1.9)
+                        }
                     }
+                    .mask(label)
                 }
-                .mask(label)
-            }
-            .fixedSize()
+                .fixedSize()
+        }
     }
 }
 
@@ -567,12 +678,15 @@ private struct WaitLabel: View {
     }
 }
 
-/// Enters from below, small and blurred; leaves shrinking into a blur.
+/// Enters from the anchor edge, small and blurred; leaves shrinking into a blur.
 struct HUDTransition: Transition {
+    var fromTop = false
+
     func body(content: Content, phase: TransitionPhase) -> some View {
         content
-            .scaleEffect(phase.isIdentity ? 1 : (phase == .willAppear ? 0.8 : 0.9), anchor: .bottom)
-            .offset(y: phase == .willAppear ? 18 : 0)
+            .scaleEffect(phase.isIdentity ? 1 : (phase == .willAppear ? 0.8 : 0.9),
+                         anchor: fromTop ? .top : .bottom)
+            .offset(y: phase == .willAppear ? (fromTop ? -14 : 18) : 0)
             .blur(radius: phase.isIdentity ? 0 : 10)
             .opacity(phase.isIdentity ? 1 : 0)
     }

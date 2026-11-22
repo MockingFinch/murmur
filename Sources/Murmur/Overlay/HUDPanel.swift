@@ -35,15 +35,22 @@ final class HUDController {
         host.sizingOptions = []
         host.frame = NSRect(origin: .zero, size: HUDView.canvas)
         panel.contentView = host
-        model.onModeChange = { [weak self] mode in self?.update(visible: mode != nil) }
+        model.onModeChange = { [weak self] oldMode, newMode in
+            self?.update(from: oldMode, to: newMode)
+        }
     }
 
-    private func update(visible: Bool) {
-        if visible {
+    private func update(from oldMode: HUDModel.Mode?, to newMode: HUDModel.Mode?) {
+        if let newMode {
             hiding?.cancel()
             hiding = nil
-            if !panel.isVisible {
+            // Re-place whenever the panel was hidden OR a fresh session starts
+            // while an old result was still fading out on another display.
+            let startingSession = (oldMode == nil || oldMode?.isResult == true) && !newMode.isResult
+            if !panel.isVisible || startingSession {
                 place()
+            }
+            if !panel.isVisible {
                 panel.orderFrontRegardless()
             }
         } else {
@@ -56,12 +63,17 @@ final class HUDController {
         }
     }
 
-    /// Bottom centre of the screen the pointer is on, just above the Dock.
+    /// Centered horizontally on the screen holding the focused window (falling
+    /// back to the pointer's screen, then main), at the top or bottom edge.
     private func place() {
         let mouse = NSEvent.mouseLocation
-        let screen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) } ?? NSScreen.main
+        let pointerScreen = NSScreen.screens.first { NSMouseInRect(mouse, $0.frame, false) }
+        let screen = TextBridge.focusedWindowScreen() ?? pointerScreen ?? NSScreen.main ?? NSScreen.screens.first
         guard let area = screen?.visibleFrame else { return }
         let size = HUDView.canvas
-        panel.setFrame(NSRect(x: area.midX - size.width / 2, y: area.minY + 6, width: size.width, height: size.height), display: false)
+        let y: CGFloat = AppSettings.shared.hudPosition == .top
+            ? area.maxY - size.height - 6
+            : area.minY + 6
+        panel.setFrame(NSRect(x: area.midX - size.width / 2, y: y, width: size.width, height: size.height), display: false)
     }
 }

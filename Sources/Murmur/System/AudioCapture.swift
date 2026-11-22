@@ -1,4 +1,6 @@
+import AudioToolbox
 import AVFoundation
+import CoreAudio
 import Foundation
 import MurmurCore
 
@@ -13,9 +15,98 @@ enum CaptureError: LocalizedError {
     }
 }
 
+/// An available macOS audio input device.
+struct AudioInputDevice: Identifiable, Hashable, Sendable {
+    let uid: String
+    let deviceID: AudioDeviceID
+    let name: String
+    let isDefault: Bool
+    var id: String { uid }
+}
+
+/// Enumerates connected microphones via CoreAudio so users can pin a preferred
+/// input (for example, MacBook Pro Microphone instead of AirPods HFP).
+enum AudioDevices {
+    static func inputs() -> [AudioInputDevice] {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDevices,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        let sys = AudioObjectID(kAudioObjectSystemObject)
+        guard AudioObjectGetPropertyDataSize(sys, &address, 0, nil, &size) == noErr, size > 0 else { return [] }
+        let count = Int(size) / MemoryLayout<AudioDeviceID>.size
+        var ids = [AudioDeviceID](repeating: 0, count: count)
+        guard AudioObjectGetPropertyData(sys, &address, 0, nil, &size, &ids) == noErr else { return [] }
+
+        let defaultID = defaultInputDeviceID()
+        var list: [AudioInputDevice] = []
+        for id in ids {
+            guard hasInputStreams(id),
+                  let uid = stringProperty(id, kAudioDevicePropertyDeviceUID), !uid.isEmpty,
+                  let name = stringProperty(id, kAudioObjectPropertyName), !name.isEmpty else { continue }
+            list.append(AudioInputDevice(uid: uid, deviceID: id, name: name, isDefault: id == defaultID))
+        }
+        return list.sorted {
+            if $0.isDefault != $1.isDefault { return $0.isDefault }
+            return $0.name.localizedCaseInsensitiveCompare($1.name) == .orderedAscending
+        }
+    }
+
+    static func deviceID(forUID uid: String) -> AudioDeviceID? {
+        guard !uid.isEmpty else { return nil }
+        return inputs().first { $0.uid == uid }?.deviceID
+    }
+
+    static func defaultInputName() -> String? {
+        guard let id = defaultInputDeviceID() else { return nil }
+        return stringProperty(id, kAudioObjectPropertyName)
+    }
+
+    private static func defaultInputDeviceID() -> AudioDeviceID? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioHardwarePropertyDefaultInputDevice,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var id = AudioDeviceID(0)
+        var size = UInt32(MemoryLayout<AudioDeviceID>.size)
+        guard AudioObjectGetPropertyData(AudioObjectID(kAudioObjectSystemObject), &address, 0, nil, &size, &id) == noErr,
+              id != kAudioObjectUnknown else { return nil }
+        return id
+    }
+
+    private static func hasInputStreams(_ id: AudioDeviceID) -> Bool {
+        var address = AudioObjectPropertyAddress(
+            mSelector: kAudioDevicePropertyStreams,
+            mScope: kAudioDevicePropertyScopeInput,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var size: UInt32 = 0
+        return AudioObjectGetPropertyDataSize(id, &address, 0, nil, &size) == noErr && size > 0
+    }
+
+    private static func stringProperty(_ id: AudioObjectID, _ selector: AudioObjectPropertySelector) -> String? {
+        var address = AudioObjectPropertyAddress(
+            mSelector: selector,
+            mScope: kAudioObjectPropertyScopeGlobal,
+            mElement: kAudioObjectPropertyElementMain
+        )
+        var unmanaged: Unmanaged<CFString>?
+        var size = UInt32(MemoryLayout<Unmanaged<CFString>?>.size)
+        let status = withUnsafeMutablePointer(to: &unmanaged) { ptr in
+            AudioObjectGetPropertyData(id, &address, 0, nil, &size, ptr)
+        }
+        guard status == noErr, let cf = unmanaged?.takeRetainedValue() else { return nil }
+        return cf as String
+    }
+}
+
 /// The microphone, converted for Doubao, with loudness for the waveform.
 final class AudioCapture: @unchecked Sendable {
     let tape = PCMTape()
+    let preferredDeviceUID: String
     /// Loudness, 0...1, about every 20 ms; called on the main queue.
     var onLevels: (@Sendable ([Float]) -> Void)?
     /// The microphone went away and no other could take over; called on
@@ -26,6 +117,10 @@ final class AudioCapture: @unchecked Sendable {
     private var configObserver: NSObjectProtocol?
     private let lock = NSLock()
     private var running = false
+
+    init(preferredDeviceUID: String = "") {
+        self.preferredDeviceUID = preferredDeviceUID
+    }
 
     func start() throws {
         let engine = AVAudioEngine()
@@ -71,6 +166,16 @@ final class AudioCapture: @unchecked Sendable {
 
     private func install(on engine: AVAudioEngine) throws {
         let input = engine.inputNode
+        if var deviceID = AudioDevices.deviceID(forUID: preferredDeviceUID), let audioUnit = input.audioUnit {
+            _ = AudioUnitSetProperty(
+                audioUnit,
+                kAudioOutputUnitProperty_CurrentDevice,
+                kAudioUnitScope_Global,
+                0,
+                &deviceID,
+                UInt32(MemoryLayout<AudioDeviceID>.size)
+            )
+        }
         let inFormat = input.outputFormat(forBus: 0)
         guard inFormat.sampleRate > 0, inFormat.channelCount > 0 else { throw CaptureError.noInput }
         guard let outFormat = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: Double(DoubaoAPI.sampleRate),

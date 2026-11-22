@@ -7,23 +7,29 @@ final class Navigator {
     var page: Page = .overview
 }
 
-/// Permissions change outside the app; while the window is open, look again
-/// every second so the checklist ticks itself off.
+/// Permissions and shortcut status change outside the view; while the window
+/// is open, check every second so the checklist ticks itself off.
 @MainActor @Observable
 final class Readiness {
     static let shared = Readiness()
     private(set) var microphone = Permissions.microphone
     private(set) var accessibility = Permissions.accessibility
+    private(set) var dictateHotkeyOK = Permissions.assumeGranted || Hotkeys.shared.isRegistered(.toggle)
+    private(set) var translateHotkeyOK = Permissions.assumeGranted || Hotkeys.shared.isRegistered(.translate)
     @ObservationIgnored private var timer: Timer?
 
     func refresh() {
         let mic = Permissions.microphone
         let ax = Permissions.accessibility
+        let dictOK = Permissions.assumeGranted || Hotkeys.shared.isRegistered(.toggle)
+        let transOK = Permissions.assumeGranted || Hotkeys.shared.isRegistered(.translate)
         if mic != microphone { microphone = mic }
         if ax != accessibility {
             accessibility = ax
             if ax, let front = NSWorkspace.shared.frontmostApplication { AccessibilityBooster.shared.boost(front) }
         }
+        if dictOK != dictateHotkeyOK { dictateHotkeyOK = dictOK }
+        if transOK != translateHotkeyOK { translateHotkeyOK = transOK }
     }
 
     func watch(_ on: Bool) {
@@ -42,6 +48,14 @@ final class Readiness {
     var stepsLeft: Int {
         [AppSettings.shared.speechReady, micReady, accessibility].filter { !$0 }.count
     }
+
+    /// First page that still needs setup or attention.
+    var firstIncompletePage: Page {
+        if !AppSettings.shared.speechReady { return .speech }
+        if !micReady || !accessibility || !dictateHotkeyOK { return .general }
+        if !translateHotkeyOK { return .translate }
+        return .overview
+    }
 }
 
 extension Page {
@@ -51,7 +65,7 @@ extension Page {
         case .speech: return "Speech"
         case .polish: return "Polish"
         case .translate: return "Translate"
-        case .shortcut: return "Shortcut"
+        case .general: return "General"
         }
     }
 
@@ -62,12 +76,14 @@ extension Page {
         case .speech: return "waveform"
         case .polish: return "sparkles"
         case .translate: return "translate"
-        case .shortcut: return "command"
+        case .general: return "gearshape"
         }
     }
 }
 
 struct RootView: View {
+    @Environment(Navigator.self) private var navigator
+
     var body: some View {
         NavigationSplitView {
             Sidebar()
@@ -75,6 +91,16 @@ struct RootView: View {
                 .toolbar(removing: .sidebarToggle)
         } detail: {
             Detail()
+        }
+        .background {
+            // ⌘1 – ⌘5 switch settings pages from anywhere in the window.
+            ForEach(Array(Page.allCases.enumerated()), id: \.element.id) { index, page in
+                Button("") { withAnimation(Motion.snappy) { navigator.page = page } }
+                    .keyboardShortcut(KeyEquivalent(Character("\(index + 1)")), modifiers: .command)
+                    .opacity(0)
+                    .frame(width: 0, height: 0)
+                    .accessibilityHidden(true)
+            }
         }
         .onAppear { Readiness.shared.watch(true) }
         .onDisappear { Readiness.shared.watch(false) }
@@ -95,7 +121,7 @@ private struct Detail: View {
                 case .speech: SpeechPage()
                 case .polish: PolishPage()
                 case .translate: TranslatePage()
-                case .shortcut: ShortcutPage()
+                case .general: GeneralPage()
                 }
             }
             .padding(.horizontal, 36)
@@ -112,9 +138,9 @@ private struct Detail: View {
 
 // MARK: - Sidebar
 
-/// Four quiet rows with room to breathe. The highlight is a soft fill that
+/// Five quiet rows with room to breathe. The highlight is a soft fill that
 /// glides to the chosen row; a small amber dot marks a page that still
-/// needs setting up.
+/// needs setting up or attention.
 private struct Sidebar: View {
     @Environment(Navigator.self) private var navigator
     @Namespace private var highlight
@@ -135,11 +161,12 @@ private struct Sidebar: View {
             .padding(.top, 10)
 
             Spacer(minLength: 12)
-            SidebarFooter { withAnimation(Motion.snappy) { navigator.page = .overview } }
+            SidebarFooter {
+                withAnimation(Motion.snappy) { navigator.page = readiness.firstIncompletePage }
+            }
         }
         .frame(minWidth: 190, idealWidth: 208, maxWidth: .infinity, alignment: .leading)
         .focusable()
-        .focusEffectDisabled()
         .onKeyPress(.downArrow) { step(1) }
         .onKeyPress(.upArrow) { step(-1) }
     }
@@ -154,9 +181,10 @@ private struct Sidebar: View {
 
     private func needsAttention(_ page: Page) -> Bool {
         switch page {
-        case .overview, .polish, .translate: return false
+        case .overview, .polish: return false
         case .speech: return !settings.speechReady
-        case .shortcut: return !readiness.micReady || !readiness.accessibility
+        case .translate: return !readiness.translateHotkeyOK
+        case .general: return !readiness.micReady || !readiness.accessibility || !readiness.dictateHotkeyOK
         }
     }
 }
@@ -187,7 +215,7 @@ private struct SidebarRow: View {
                     Circle()
                         .fill(Brand.amber)
                         .frame(width: 6, height: 6)
-                        .help("Needs setting up")
+                        .help("Needs attention")
                         .transition(.scale.combined(with: .opacity))
                 }
             }
@@ -222,19 +250,24 @@ private struct SidebarFooter: View {
 
     var body: some View {
         let left = readiness.stepsLeft
+        let hotkeyIssue = left == 0 && !readiness.dictateHotkeyOK
         VStack(spacing: 0) {
             Rectangle().fill(Color.hairline).frame(height: 0.5)
             HStack(spacing: 8) {
                 Circle()
-                    .fill(left == 0 ? Brand.mint : Brand.amber)
+                    .fill(left == 0 && !hotkeyIssue ? Brand.mint : Brand.amber)
                     .frame(width: 7, height: 7)
                 Group {
-                    if left == 0 {
+                    if left == 0 && !hotkeyIssue {
                         Text("Ready")
+                    } else if hotkeyIssue {
+                        Button("Shortcut issue", action: showSetup)
+                            .buttonStyle(.plain)
+                            .help("Open General to pick another shortcut")
                     } else {
                         Button(left == 1 ? "1 step left" : "\(left) steps left", action: showSetup)
                             .buttonStyle(.plain)
-                            .help("Show what's left to set up")
+                            .help("Jump to the next setup step")
                     }
                 }
                 .font(.system(size: 12, weight: .medium))

@@ -3,18 +3,31 @@ import AVFoundation
 import MurmurCore
 import SwiftUI
 
-struct ShortcutPage: View {
+struct GeneralPage: View {
+    @Environment(Navigator.self) private var navigator
     @Bindable private var settings = AppSettings.shared
     private let readiness = Readiness.shared
     @State private var loginItem = Permissions.launchAtLogin
     @State private var askedForAccessibility = false
 
     var body: some View {
-        PageHeader(symbol: "command", gradient: Brand.graphite, title: "Shortcut",
-                   subtitle: "Press to start, press again to insert; with text selected, it refines the selection. Translation has its own shortcut, on the Translate page.")
+        PageHeader(symbol: "gearshape", gradient: Brand.graphite, title: "General",
+                   subtitle: "Shortcuts, permissions, floating bar placement, and clipboard behavior.")
 
-        PageSection(title: "Shortcut") {
-            Card { ShortcutRecorder(hotkey: .dictate) }
+        PageSection(title: "Shortcuts") {
+            Card {
+                ShortcutRecorder(hotkey: .dictate)
+                RowDivider()
+                SettingRow(title: "Dictate and translate",
+                           detail: "Translates speech or selected text into \(TranslationLanguages.native(TranslatePrompt.language(settings.translateLanguage))).") {
+                    HStack(spacing: 10) {
+                        KeyCaps(caps: settings.translateShortcut.caps, size: 22)
+                        Button("Change…") { withAnimation(Motion.snappy) { navigator.page = .translate } }
+                            .buttonStyle(.link)
+                            .font(.system(size: 12))
+                    }
+                }
+            }
         }
 
         PageSection(title: "Permissions") {
@@ -51,9 +64,26 @@ struct ShortcutPage: View {
             }
         }
 
-        PageSection(title: "General") {
+        PageSection(title: "Behavior") {
             Card {
-                SettingRow(title: "Sounds", detail: "A soft cue when listening starts and stops.") {
+                SettingRow(title: "Floating bar position",
+                           detail: "Top stays clear of bottom chat boxes in Slack, WeChat, and AI tools.") {
+                    Picker("", selection: $settings.hudPosition) {
+                        ForEach(HUDPosition.allCases) { pos in
+                            Text(pos.title).tag(pos)
+                        }
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .frame(width: 164)
+                }
+                RowDivider()
+                SettingRow(title: "Restore clipboard after pasting",
+                           detail: "Keeps whatever you had copied before dictating. If pasting isn't possible, the text stays on your clipboard.") {
+                    Toggle("", isOn: $settings.restoreClipboard).toggleStyle(.switch).labelsHidden()
+                }
+                RowDivider()
+                SettingRow(title: "Sounds", detail: "Soft cues when listening starts, stops, or cancels.") {
                     Toggle("", isOn: $settings.sounds).toggleStyle(.switch).labelsHidden()
                 }
                 RowDivider()
@@ -72,7 +102,7 @@ struct ShortcutPage: View {
 
 // MARK: - Recorder
 
-/// Click, press the new combination. Esc gives up; the old one stays.
+/// Click, press the new combination. Esc or clicking away gives up; the old one stays.
 /// Records either of Murmur's shortcuts; they can't be the same.
 struct ShortcutRecorder: View {
     let hotkey: AppHotkey
@@ -80,11 +110,19 @@ struct ShortcutRecorder: View {
     @State private var held: NSEvent.ModifierFlags = []
     @State private var message: String?
     @State private var monitor: Any?
+    @State private var resignObservers: [NSObjectProtocol] = []
+    @State private var stoppedByClickAt = Date.distantPast
 
     var body: some View {
         VStack(alignment: .leading, spacing: 14) {
             HStack(spacing: 16) {
-                Button { recording ? stop() : start() } label: {
+                Button {
+                    if recording {
+                        stop()
+                    } else if Date().timeIntervalSince(stoppedByClickAt) > 0.25 {
+                        start()
+                    }
+                } label: {
                     ZStack {
                         if recording {
                             HStack(spacing: 6) {
@@ -138,15 +176,15 @@ struct ShortcutRecorder: View {
                     .transition(.opacity.combined(with: .move(edge: .top)))
             }
 
-            HStack(spacing: 18) {
+            HStack(spacing: 16) {
                 if hotkey == .dictate {
-                    Hint(caps: hotkey.shortcut.caps, text: "start · stop and insert")
-                    Hint(symbol: "text.cursor", text: "select text first to refine it")
+                    Hint(caps: hotkey.shortcut.caps, text: "tap to toggle · hold to talk")
+                    Hint(symbol: "text.cursor", text: "select text to refine")
                 } else {
-                    Hint(caps: hotkey.shortcut.caps, text: "start · stop and translate")
-                    Hint(symbol: "text.cursor", text: "select text first to translate it")
+                    Hint(caps: hotkey.shortcut.caps, text: "tap to toggle · hold to translate")
+                    Hint(symbol: "text.cursor", text: "select text to translate")
                 }
-                Hint(caps: ["Esc"], text: "cancel recording")
+                Hint(caps: ["Esc"], text: "cancel")
             }
             .padding(.top, 2)
         }
@@ -164,7 +202,21 @@ struct ShortcutRecorder: View {
         recording = true
         // While recording, both shortcuts must reach us, not trigger.
         AppHotkey.allCases.forEach { $0.suspend() }
-        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged]) { event in
+        let center = NotificationCenter.default
+        resignObservers = [
+            center.addObserver(forName: NSWindow.didResignKeyNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { stop() }
+            },
+            center.addObserver(forName: NSApplication.didResignActiveNotification, object: nil, queue: .main) { _ in
+                MainActor.assumeIsolated { stop() }
+            },
+        ]
+        monitor = NSEvent.addLocalMonitorForEvents(matching: [.keyDown, .flagsChanged, .leftMouseDown]) { event in
+            if event.type == .leftMouseDown {
+                stoppedByClickAt = Date()
+                stop()
+                return event
+            }
             if event.type == .flagsChanged {
                 held = event.modifierFlags.intersection([.command, .option, .control, .shift])
                 return nil
@@ -178,26 +230,35 @@ struct ShortcutRecorder: View {
                 apply(candidate)
             } else {
                 NSSound.beep()
-                message = "Add ⌃, ⌥ or ⌘, so the key still types normally on its own."
+                message = "Add ⌃, ⌥ or ⌘ (or press a Function key), so the key still types normally."
             }
             return nil
         }
     }
 
-    private func stop() {
+    private func tearDownMonitors() {
         if let monitor { NSEvent.removeMonitor(monitor) }
         monitor = nil
+        for o in resignObservers { NotificationCenter.default.removeObserver(o) }
+        resignObservers.removeAll()
+    }
+
+    private func stop() {
+        tearDownMonitors()
         if recording {
             recording = false
             Self.reinstall()
+            Readiness.shared.refresh()
         }
     }
 
     private func apply(_ candidate: Shortcut) {
-        if let monitor { NSEvent.removeMonitor(monitor) }
-        monitor = nil
+        tearDownMonitors()
         recording = false
-        defer { Self.reinstall() }
+        defer {
+            Self.reinstall()
+            Readiness.shared.refresh()
+        }
         if candidate == hotkey.other.shortcut {
             message = "\(candidate.display) is already your \(hotkey.other.role) shortcut. Try another."
             return

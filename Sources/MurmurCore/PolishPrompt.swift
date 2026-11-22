@@ -67,12 +67,28 @@ public enum PolishPrompt {
     Do not include explanations, comments, labels, introductory text, or surrounding quotation marks.
     """
 
+    /// Splits a user-entered vocabulary list (newline, comma, or semicolon separated)
+    /// into unique trimmed terms, preserving order.
+    public static func parseVocabulary(_ raw: String) -> [String] {
+        let separators = CharacterSet(charactersIn: "\n\r,;，；")
+        var seen = Set<String>()
+        var result: [String] = []
+        for piece in raw.components(separatedBy: separators) {
+            let term = piece.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !term.isEmpty else { continue }
+            let key = term.lowercased()
+            if seen.insert(key).inserted { result.append(term) }
+        }
+        return result
+    }
+
     /// The system and user messages for `input`. The user's instructions
     /// come first; a short fixed frame keeps the model from treating the
     /// text as a message addressed to it.
-    public static func messages(instructions: String, input: String, source: Source) -> (system: String, user: String) {
+    public static func messages(instructions: String, input: String, source: Source,
+                                vocabulary: [String] = []) -> (system: String, user: String) {
         let rules = instructions.trimmingCharacters(in: .whitespacesAndNewlines)
-        let frame: String
+        var frame: String
         let user: String
         switch source {
         case .dictation:
@@ -89,6 +105,10 @@ public enum PolishPrompt {
             Reply with the enhanced text only, without the tags.
             """
             user = "<text>\n\(input)\n</text>"
+        }
+        let terms = vocabulary.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }.filter { !$0.isEmpty }
+        if !terms.isEmpty {
+            frame += "\n\nCustom vocabulary (prefer these exact spellings when they match what was said): \(terms.joined(separator: ", "))."
         }
         let system = rules.isEmpty ? frame : rules + "\n\n---\n" + frame
         return (system, user)

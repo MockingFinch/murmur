@@ -12,12 +12,15 @@ final class Hotkeys {
     static let shared = Hotkeys()
 
     private var refs: [UInt32: EventHotKeyRef] = [:]
-    private var actions: [UInt32: () -> Void] = [:]
+    private var pressActions: [UInt32: () -> Void] = [:]
+    private var releaseActions: [UInt32: () -> Void] = [:]
     private var installed = false
 
     /// Registers `shortcut`; false when another app already holds it.
     @discardableResult
-    func register(_ id: ID, _ shortcut: Shortcut, action: @escaping () -> Void) -> Bool {
+    func register(_ id: ID, _ shortcut: Shortcut,
+                  onRelease: (() -> Void)? = nil,
+                  action: @escaping () -> Void) -> Bool {
         installIfNeeded()
         unregister(id)
         var ref: EventHotKeyRef?
@@ -26,34 +29,50 @@ final class Hotkeys {
                                          GetEventDispatcherTarget(), 0, &ref)
         guard status == noErr, let ref else { return false }
         refs[id.rawValue] = ref
-        actions[id.rawValue] = action
+        pressActions[id.rawValue] = action
+        releaseActions[id.rawValue] = onRelease
         return true
     }
 
     func unregister(_ id: ID) {
         if let ref = refs.removeValue(forKey: id.rawValue) { UnregisterEventHotKey(ref) }
-        actions[id.rawValue] = nil
+        pressActions[id.rawValue] = nil
+        releaseActions[id.rawValue] = nil
     }
 
     func isRegistered(_ id: ID) -> Bool { refs[id.rawValue] != nil }
 
-    fileprivate func fire(_ id: UInt32) { actions[id]?() }
+    fileprivate func firePressed(_ id: UInt32) { pressActions[id]?() }
+    fileprivate func fireReleased(_ id: UInt32) { releaseActions[id]?() }
 
     private func installIfNeeded() {
         guard !installed else { return }
         installed = true
-        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
-        InstallEventHandler(GetEventDispatcherTarget(), hotKeyHandler, 1, &spec, nil, nil)
+        var specs = [
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed)),
+            EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyReleased)),
+        ]
+        InstallEventHandler(GetEventDispatcherTarget(), hotKeyHandler, specs.count, &specs, nil, nil)
     }
 }
 
 private func hotKeyHandler(_ next: EventHandlerCallRef?, _ event: EventRef?, _ data: UnsafeMutableRawPointer?) -> OSStatus {
+    guard let event else { return OSStatus(eventNotHandledErr) }
     var id = EventHotKeyID()
     let status = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
                                    nil, MemoryLayout<EventHotKeyID>.size, nil, &id)
     guard status == noErr else { return status }
     let key = id.id
-    DispatchQueue.main.async { MainActor.assumeIsolated { Hotkeys.shared.fire(key) } }
+    let kind = GetEventKind(event)
+    DispatchQueue.main.async {
+        MainActor.assumeIsolated {
+            if kind == UInt32(kEventHotKeyReleased) {
+                Hotkeys.shared.fireReleased(key)
+            } else {
+                Hotkeys.shared.firePressed(key)
+            }
+        }
+    }
     return noErr
 }
 

@@ -76,7 +76,7 @@ private struct LanguageChoice: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 10) {
-            SettingRow(title: "Language", detail: "What your words go in as, whatever language you speak.") {
+            SettingRow(title: "Language", detail: "What your words go in as, whatever language you speak. Also switchable from the menu bar.") {
                 Picker("", selection: choice) {
                     ForEach(TranslationLanguages.all) { l in
                         Text(l.native == l.name ? l.name : "\(l.name) — \(l.native)").tag(l.name)
@@ -95,13 +95,25 @@ private struct LanguageChoice: View {
         .animation(Motion.smooth, value: custom)
     }
 
-    private var custom: Bool { typing || TranslationLanguages.entry(settings.translateLanguage) == nil }
+    private var effective: String {
+        settings.translateLanguage.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private var custom: Bool {
+        typing || (!effective.isEmpty && TranslationLanguages.entry(effective) == nil)
+    }
 
     private var choice: Binding<String> {
         Binding(
-            get: { custom ? Self.other : TranslationLanguages.entry(settings.translateLanguage)?.name ?? Self.other },
+            get: {
+                if custom { return Self.other }
+                return TranslationLanguages.entry(TranslatePrompt.language(settings.translateLanguage))?.name ?? Self.other
+            },
             set: { picked in
                 if picked == Self.other {
+                    if TranslationLanguages.entry(settings.translateLanguage) != nil {
+                        settings.translateLanguage = ""
+                    }
                     typing = true
                 } else {
                     typing = false

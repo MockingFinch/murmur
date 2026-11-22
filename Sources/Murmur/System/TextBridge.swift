@@ -15,10 +15,12 @@ import Carbon.HIToolbox
 ///    fields or under secure input, never in lists or file browsers, and
 ///    copied files are ignored.
 ///
-/// Insertion: the text goes on the clipboard and stays there. Then it is
-/// pasted (⌘V, so the app gets a normal undo step) into the field with the
-/// caret, or else into the text field under the mouse pointer, which is
-/// focused first. With neither, it is left on the clipboard for the user.
+/// Insertion: the text goes on the clipboard. Then it is pasted (⌘V, so the
+/// app gets a normal undo step) into the field with the caret, or optionally
+/// into a text field under the mouse pointer in the frontmost app. With
+/// neither, it is left on the clipboard for the user. When `restoreClipboard`
+/// is enabled and pasting succeeds, the previous clipboard is put back once
+/// the app has had a moment to read it.
 @MainActor
 enum TextBridge {
     struct Selection {
@@ -33,6 +35,62 @@ enum TextBridge {
         case pasted
         /// Not typed: left on the clipboard, for the reason given.
         case copied(String)
+    }
+
+    // MARK: Focused Screen
+
+    /// The screen holding the frontmost app's focused window, so the floating
+    /// capsule appears where the user is actually looking on multi-display setups.
+    static func focusedWindowScreen() -> NSScreen? {
+        guard let primary = NSScreen.screens.first,
+              let front = NSWorkspace.shared.frontmostApplication else { return nil }
+        let pid = front.processIdentifier
+
+        if let quartzRect = focusedWindowQuartzRect(pid: pid) {
+            let appKitRect = NSRect(
+                x: quartzRect.origin.x,
+                y: primary.frame.maxY - quartzRect.maxY,
+                width: quartzRect.width,
+                height: quartzRect.height
+            )
+            // Pick the display with the largest visible overlap with the focused window.
+            var best: (screen: NSScreen, area: CGFloat)?
+            for screen in NSScreen.screens {
+                let inter = screen.frame.intersection(appKitRect)
+                guard !inter.isNull, !inter.isEmpty else { continue }
+                let area = inter.width * inter.height
+                if best == nil || area > best!.area { best = (screen, area) }
+            }
+            if let best { return best.screen }
+        }
+        return nil
+    }
+
+    private static func focusedWindowQuartzRect(pid: pid_t) -> CGRect? {
+        if AXIsProcessTrusted() {
+            let app = AXUIElementCreateApplication(pid)
+            AXUIElementSetMessagingTimeout(app, 0.15)
+            if let win = elementAttribute(app, kAXFocusedWindowAttribute) ?? elementAttribute(app, kAXMainWindowAttribute),
+               let pos = pointAttribute(win, kAXPositionAttribute),
+               let size = sizeAttribute(win, kAXSizeAttribute),
+               size.width > 1, size.height > 1 {
+                return CGRect(origin: pos, size: size)
+            }
+        }
+        // Fallback that works without Accessibility: find the frontmost app's top standard window.
+        guard let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] else {
+            return nil
+        }
+        for info in list {
+            guard let ownerPID = (info[kCGWindowOwnerPID as String] as? NSNumber)?.int32Value,
+                  ownerPID == pid,
+                  let layer = (info[kCGWindowLayer as String] as? NSNumber)?.intValue, layer == 0,
+                  let bounds = info[kCGWindowBounds as String] as? NSDictionary,
+                  let rect = CGRect(dictionaryRepresentation: bounds),
+                  rect.width > 40, rect.height > 40 else { continue }
+            return rect
+        }
+        return nil
     }
 
     // MARK: Selection
@@ -127,14 +185,16 @@ enum TextBridge {
     }
 
     private static func copyProbe() async -> String? {
-        await waitForModifierRelease()
+        // If modifiers are still held past 300 ms, the user is likely holding
+        // the shortcut for push-to-talk rather than tapping to rewrite a selection.
+        guard await waitForModifierRelease(timeout: 0.3) else { return nil }
         let pb = NSPasteboard.general
         let saved = Clipboard.snapshot(pb)
         let before = pb.changeCount
         postKey(UInt16(kVK_ANSI_C), flags: .maskCommand)
 
         var changed = false
-        for _ in 0 ..< 30 { // up to 300 ms
+        for _ in 0 ..< 25 { // up to 250 ms
             try? await Task.sleep(nanoseconds: 10_000_000)
             if pb.changeCount != before { changed = true; break }
         }
@@ -151,17 +211,21 @@ enum TextBridge {
 
     // MARK: Insertion
 
-    static func paste(_ text: String) async -> PasteOutcome {
+    static func paste(_ text: String, allowPointerFallback: Bool = true, restoreClipboard: Bool = false) async -> PasteOutcome {
+        let pb = NSPasteboard.general
+        let prior = restoreClipboard ? Clipboard.snapshot(pb) : nil
         Clipboard.put(text)
+        let afterPut = pb.changeCount
+
         guard AXIsProcessTrusted() else {
-            return .copied("Murmur isn't allowed to paste yet; see its Shortcut page. Paste with ⌘V for now.")
+            return .copied("Murmur isn't allowed to paste yet; see its General page. Paste with ⌘V for now.")
         }
         if IsSecureEventInputEnabled() {
             return .copied("Secure input is on, so Murmur can't type here. Paste with ⌘V.")
         }
-        await waitForModifierRelease()
+        _ = await waitForModifierRelease()
 
-        switch findTarget() {
+        switch findTarget(allowPointerFallback: allowPointerFallback) {
         case .caret, .unknown:
             break
         case .pointer(let element, let point):
@@ -169,9 +233,21 @@ enum TextBridge {
                 return .copied("Couldn't reach the field under the pointer. Paste with ⌘V.")
             }
         case .nowhere:
-            return .copied("No text field at the cursor or under the pointer. Paste with ⌘V.")
+            return .copied(allowPointerFallback
+                           ? "No text field at the cursor or under the pointer. Paste with ⌘V."
+                           : "The selected text isn't editable. Paste with ⌘V.")
         }
         postKey(UInt16(kVK_ANSI_V), flags: .maskCommand)
+        if let prior {
+            // Wait long enough for the target app to consume ⌘V before putting the
+            // user's previous clipboard back (only if nothing else wrote to it).
+            Task { @MainActor in
+                try? await Task.sleep(nanoseconds: 240_000_000)
+                if pb.changeCount == afterPut {
+                    Clipboard.restore(pb, prior)
+                }
+            }
+        }
         return .pasted
     }
 
@@ -180,7 +256,7 @@ enum TextBridge {
     private enum Target {
         /// The focused element takes text.
         case caret
-        /// No caret in a text field, but the pointer is over one.
+        /// No caret in a text field, but the pointer is over one in the front app.
         case pointer(AXUIElement, CGPoint)
         /// The app in front doesn't say what has focus: paste and hope, as a person would.
         case unknown
@@ -188,11 +264,14 @@ enum TextBridge {
         case nowhere
     }
 
-    private static func findTarget() -> Target {
+    private static func findTarget(allowPointerFallback: Bool) -> Target {
         let front = NSWorkspace.shared.frontmostApplication
         let focused = front.flatMap { focusedElement(pid: $0.processIdentifier) }
         if let focused, isEditable(focused) { return .caret }
-        if let (element, point) = editableUnderPointer() { return .pointer(element, point) }
+        if allowPointerFallback, let frontPID = front?.processIdentifier,
+           let (element, point) = editableUnderPointer(inApp: frontPID) {
+            return .pointer(element, point)
+        }
         if let focused, let role = stringAttribute(focused, kAXRoleAttribute), notTextRoles.contains(role) { return .nowhere }
         return .unknown
     }
@@ -221,9 +300,10 @@ enum TextBridge {
         return false
     }
 
-    /// The text field under the mouse pointer (or the field a hit lands
-    /// inside), with the point in screen coordinates (top-left origin).
-    private static func editableUnderPointer() -> (AXUIElement, CGPoint)? {
+    /// The text field under the mouse pointer in the frontmost app, with the
+    /// point in screen coordinates (top-left origin). Restricting to `frontPID`
+    /// prevents accidentally clicking and focusing a background window.
+    private static func editableUnderPointer(inApp frontPID: pid_t) -> (AXUIElement, CGPoint)? {
         let mouse = NSEvent.mouseLocation
         guard let primary = NSScreen.screens.first else { return nil }
         let point = CGPoint(x: mouse.x, y: primary.frame.maxY - mouse.y)
@@ -233,7 +313,9 @@ enum TextBridge {
         guard AXUIElementCopyElementAtPosition(system, Float(point.x), Float(point.y), &hit) == .success,
               var element = hit else { return nil }
         var pid: pid_t = 0
-        if AXUIElementGetPid(element, &pid) == .success, pid == ProcessInfo.processInfo.processIdentifier { return nil }
+        guard AXUIElementGetPid(element, &pid) == .success,
+              pid == frontPID,
+              pid != ProcessInfo.processInfo.processIdentifier else { return nil }
         for _ in 0 ..< 6 {
             if isEditable(element) { return (element, point) }
             guard let parent = elementAttribute(element, kAXParentAttribute) else { break }
@@ -242,9 +324,8 @@ enum TextBridge {
         return nil
     }
 
-    /// Gives the field the caret: through Accessibility when its app is in
-    /// front, otherwise with a click where the pointer already is (which
-    /// also brings its window forward).
+    /// Gives the field the caret: through Accessibility first, otherwise with
+    /// a click where the pointer already is.
     private static func focus(_ element: AXUIElement, at point: CGPoint) async -> Bool {
         var pid: pid_t = 0
         AXUIElementGetPid(element, &pid)
@@ -271,13 +352,16 @@ enum TextBridge {
 
     /// The user's own fingers may still be on ⌃ from the shortcut: a key
     /// sent now would arrive as ⌃⌘V. Wait (briefly) for them to let go.
-    static func waitForModifierRelease(timeout: TimeInterval = 0.6) async {
+    /// Returns true if all modifiers were released before `timeout`.
+    @discardableResult
+    static func waitForModifierRelease(timeout: TimeInterval = 0.6) async -> Bool {
         let mask: CGEventFlags = [.maskControl, .maskCommand, .maskAlternate, .maskShift]
         let deadline = Date().addingTimeInterval(timeout)
         while Date() < deadline {
-            if CGEventSource.flagsState(.combinedSessionState).intersection(mask).isEmpty { return }
+            if CGEventSource.flagsState(.combinedSessionState).intersection(mask).isEmpty { return true }
             try? await Task.sleep(nanoseconds: 15_000_000)
         }
+        return CGEventSource.flagsState(.combinedSessionState).intersection(mask).isEmpty
     }
 
     static func postKey(_ key: UInt16, flags: CGEventFlags) {
@@ -312,6 +396,22 @@ enum TextBridge {
               CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
         var range = CFRange()
         return AXValueGetValue(v as! AXValue, .cfRange, &range) ? range : nil
+    }
+
+    private static func pointAttribute(_ e: AXUIElement, _ attribute: String) -> CGPoint? {
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(e, attribute as CFString, &v) == .success, let v,
+              CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
+        var pt = CGPoint.zero
+        return AXValueGetValue(v as! AXValue, .cgPoint, &pt) ? pt : nil
+    }
+
+    private static func sizeAttribute(_ e: AXUIElement, _ attribute: String) -> CGSize? {
+        var v: CFTypeRef?
+        guard AXUIElementCopyAttributeValue(e, attribute as CFString, &v) == .success, let v,
+              CFGetTypeID(v) == AXValueGetTypeID() else { return nil }
+        var sz = CGSize.zero
+        return AXValueGetValue(v as! AXValue, .cgSize, &sz) ? sz : nil
     }
 }
 

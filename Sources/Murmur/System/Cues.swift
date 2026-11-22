@@ -1,10 +1,11 @@
 import AppKit
 
 /// Short, soft sound cues, synthesised once: a rising two-note chime to
-/// start, the same falling to stop, and a low double tap for a problem.
+/// start, the same falling to stop, a muted tap to cancel, and a low
+/// double tap for a problem.
 @MainActor
 enum Cue {
-    case start, stop, problem
+    case start, stop, cancel, problem
 
     private static var cache: [String: NSSound] = [:]
 
@@ -13,7 +14,7 @@ enum Cue {
         let key = "\(cue)"
         let sound = cache[key] ?? {
             let s = NSSound(data: wav(for: cue))
-            s?.volume = 0.32
+            s?.volume = cue == .cancel ? 0.22 : 0.32
             cache[key] = s
             return s
         }()
@@ -25,6 +26,7 @@ enum Cue {
         switch cue {
         case .start: return synth([(1318.5, 0.055), (1760.0, 0.11)])
         case .stop: return synth([(1760.0, 0.055), (1318.5, 0.11)])
+        case .cancel: return synth([(659.25, 0.042), (493.88, 0.068)])
         case .problem: return synth([(392.0, 0.07), (0, 0.035), (329.6, 0.12)])
         }
     }

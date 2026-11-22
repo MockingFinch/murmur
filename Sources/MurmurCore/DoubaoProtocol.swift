@@ -178,8 +178,10 @@ public enum DoubaoAPI {
     }
 
     /// The full client request that opens a stream, with the second pass on.
-    public static func startRequest() -> Data {
-        let request: [String: Any] = [
+    /// Optional `hotwords` are passed via `corpus.context` to bias recognition
+    /// toward names, product terms, and domain vocabulary.
+    public static func startRequest(hotwords: [String] = []) -> Data {
+        var request: [String: Any] = [
             "model_name": "bigmodel",
             "enable_itn": true,
             "enable_punc": true,
@@ -187,6 +189,14 @@ public enum DoubaoAPI {
             "enable_nonstream": true,
             "show_utterances": true,
         ]
+        let cleaned = Array(hotwords.map { $0.trimmingCharacters(in: .whitespacesAndNewlines) }
+            .filter { !$0.isEmpty }
+            .prefix(60))
+        if !cleaned.isEmpty,
+           let ctxData = try? JSONSerialization.data(withJSONObject: ["hotwords": cleaned.map { ["word": $0] }], options: [.sortedKeys]),
+           let ctxString = String(data: ctxData, encoding: .utf8) {
+            request["corpus"] = ["context": ctxString]
+        }
         let body: [String: Any] = [
             "user": ["uid": "murmur"],
             "audio": ["format": "pcm", "codec": "raw", "rate": sampleRate, "bits": 16, "channel": 1],

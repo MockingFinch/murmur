@@ -2,35 +2,35 @@ import AppKit
 import MurmurCore
 
 enum Page: String, CaseIterable, Identifiable, Hashable {
-    case overview, speech, polish, translate, shortcut
+    case overview, speech, polish, translate, general
     var id: String { rawValue }
 }
 
 /// The one owner of a session: what the shortcuts do, in what order.
 ///
 ///   dictate (⌃X) ───┬─ text selected (and a model set up) → refine it → replace it
-///                   └─ otherwise → listen … shortcut → complete text from Doubao
-///                                                     → polish → insert
+///                   └─ otherwise → listen … shortcut (or release after hold)
+///                                           → complete text from Doubao → polish → insert
 ///   translate (⌃⌘X) ┬─ text selected → translate it → replace it
 ///                   └─ otherwise → the same dictation, then polish → translate → insert
 ///
 ///   The shortcut that starts a session decides what it is; either one ends
-///   it. Esc cancels and discards a recording while listening.
-///
-///   Nothing said is lost:
-///   - to the network: the stream to Doubao reconnects as often as it
-///     takes while the user speaks, keeping every sentence it confirmed;
-///   - to Doubao never coming back: what it confirmed goes in, and the
-///     recording, on disk from the first syllable, stays to transcribe again;
-///   - to a crash or a quit: that recording is offered at the next launch;
-///   - to the model: each request gets up to five attempts, and if
-///     polishing still fails the transcript goes in as Doubao heard it; if
-///     translating fails, the polished text goes in.
+///   it. Holding the starting shortcut past 0.4 s stops on release. Esc cancels
+///   a recording while listening (double-Esc once substantial speech exists).
 @MainActor
 final class DictationEngine {
     enum State { case idle, arming, listening, working }
     /// What a session is for.
     enum Intent { case dictate, translate }
+
+    /// The most recent warning or error, kept in memory so the menu bar can
+    /// explain what went wrong even after the floating capsule fades out.
+    struct LastIssue: Equatable {
+        var title: String
+        var detail: String?
+        var date: Date
+        var page: Page?
+    }
 
     static let shared = DictationEngine()
 
@@ -39,6 +39,8 @@ final class DictationEngine {
     /// The current (or last) session's intent.
     private(set) var intent: Intent = .dictate
     var onStateChange: ((State) -> Void)?
+    /// Fired when saved recordings or `lastIssue` change, so the menu bar badge updates.
+    var onInventoryChange: (() -> Void)?
     /// Opens the settings window on a page (for problems only the user can fix).
     var openSettings: ((Page) -> Void)?
 
@@ -47,6 +49,9 @@ final class DictationEngine {
     private(set) var lastHeard: String?
     /// The last text Murmur inserted or copied. In memory only.
     private(set) var lastResult: String?
+    /// The last warning or error from a session, cleared on the next clean completion.
+    private(set) var lastIssue: LastIssue?
+
     private let settings = AppSettings.shared
     private var capture: AudioCapture?
     private var transcriber: ResilientTranscriber?
@@ -58,18 +63,28 @@ final class DictationEngine {
     /// Recordings whose words aren't all in yet.
     let recordings = RecordingStore(directory: AppFiles.directory.appendingPathComponent("Recordings", isDirectory: true))
     private var work: Task<Void, Never>?
+    private var armingReveal: Task<Void, Never>?
     /// Ends a dictation by itself: at the length limit, or once Doubao has
     /// heard nothing new for a while.
     private var autoStop: Task<Void, Never>?
     /// How long Doubao has heard nothing new, while it's connected.
     private var silence: SilenceWatch?
-    /// The quiet allowed in the current dictation, as set when it began.
+    /// The quiet allowed in the current dictation, as set when it began (0 = off).
     private var quietLimit = SilenceWatch.defaultLimit
     private var lastPress = Date.distantPast
+    /// Hybrid tap-to-toggle / hold-to-talk tracking.
+    private var pressStartedAt: Date?
+    private var holdSessionRun: Int?
+    private var pendingHoldStopRun: Int?
     /// Numbers sessions: a late callback from a cancelled one changes nothing.
     private var run = 0
 
     static let maxRecording: TimeInterval = 15 * 60
+    /// Holding a shortcut at least this long switches to release-to-stop.
+    private static let holdThreshold: TimeInterval = 0.4
+    /// Substantial recordings require a second Esc to prevent accidental loss.
+    private static let guardedEscapeSeconds: TimeInterval = 10
+    private static let guardedEscapeChars = 20
 
     // MARK: Entry points
 
@@ -80,25 +95,68 @@ final class DictationEngine {
         guard now.timeIntervalSince(lastPress) > 0.25 else { return }
         lastPress = now
         switch state {
-        case .idle: begin(intent)
-        case .listening: stopListening()
-        case .arming, .working: hud.nudge()
+        case .idle:
+            pressStartedAt = now
+            begin(intent)
+            holdSessionRun = run
+            pendingHoldStopRun = nil
+        case .listening:
+            holdSessionRun = nil
+            pendingHoldStopRun = nil
+            stopListening()
+        case .arming, .working:
+            hud.nudge()
         }
+    }
+
+    /// Releasing a shortcut after holding it at least `holdThreshold` stops
+    /// the dictation it started (hybrid hold-to-talk). Quick taps stay in toggle mode.
+    func release(_ intent: Intent) {
+        guard holdSessionRun == run, let started = pressStartedAt else { return }
+        let held = Date().timeIntervalSince(started)
+        holdSessionRun = nil
+        pressStartedAt = nil
+        guard held >= Self.holdThreshold else { return }
+        if state == .listening {
+            stopListening()
+        } else if state == .arming {
+            pendingHoldStopRun = run
+        }
+    }
+
+    /// Global Esc while listening: cancels immediately for quick false starts,
+    /// or asks for a second press once substantial speech has been captured.
+    func pressEscape() {
+        guard state == .listening else { return }
+        let substantial = Date().timeIntervalSince(hud.startedAt) >= Self.guardedEscapeSeconds
+            || TextMetrics.visibleCharacters(hud.liveText) >= Self.guardedEscapeChars
+        if substantial, !hud.escapeConfirm {
+            hud.armEscapeConfirm()
+            hud.nudge()
+            return
+        }
+        cancel()
     }
 
     func cancel() {
         guard state != .idle else { return }
         let speaking = state != .working
         run += 1
+        armingReveal?.cancel()
+        armingReveal = nil
         work?.cancel()
         autoStop?.cancel()
         silence = nil
+        holdSessionRun = nil
+        pendingHoldStopRun = nil
+        pressStartedAt = nil
         transcriber?.cancel()
         capture?.stop()
         writer?.close()
         writer = nil
         transcriber = nil
         capture = nil
+        Cue.play(.cancel)
         // Cancelling while speaking means "never mind". Once the user has
         // stopped, they said what they meant: giving up on the wait keeps
         // the recording.
@@ -110,6 +168,13 @@ final class DictationEngine {
             hud.finish(.cancelled)
         }
         state = .idle
+        onInventoryChange?()
+    }
+
+    func clearLastIssue() {
+        guard lastIssue != nil else { return }
+        lastIssue = nil
+        onInventoryChange?()
     }
 
     // MARK: Starting
@@ -124,6 +189,15 @@ final class DictationEngine {
             return
         }
         state = .arming
+        // Give quick visual feedback if the selection check takes more than a blink.
+        armingReveal?.cancel()
+        armingReveal = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 80_000_000)
+            guard !Task.isCancelled, let self, self.run == id, self.state == .arming else { return }
+            self.hud.reset()
+            self.hud.target = intent == .translate ? self.targetLanguage : nil
+            self.hud.show(.arming)
+        }
         // The microphone starts at once, before we know whether this is a
         // dictation: the first syllable is never lost to the selection check.
         var early: AudioCapture?
@@ -136,11 +210,13 @@ final class DictationEngine {
 
     private func decide(_ early: AudioCapture?, _ id: Int) async {
         if settings.polishReady, Permissions.accessibility, let selection = await TextBridge.readSelection() {
+            armingReveal?.cancel()
             early?.stop()
             guard id == run else { return }
             await rework(selection, id)
             return
         }
+        armingReveal?.cancel()
         guard id == run else { early?.stop(); return }
         guard settings.speechReady else {
             early?.stop()
@@ -152,11 +228,11 @@ final class DictationEngine {
             switch Permissions.microphone {
             case .notDetermined:
                 guard await Permissions.requestMicrophone() else {
-                    setupProblem("Murmur can't hear you", "Allow the microphone to dictate.", page: .shortcut)
+                    setupProblem("Murmur can't hear you", "Allow the microphone to dictate.", page: .general)
                     return
                 }
             case .denied, .restricted:
-                setupProblem("Murmur can't hear you", "Allow the microphone in System Settings.", page: .shortcut)
+                setupProblem("Murmur can't hear you", "Allow the microphone in System Settings.", page: .general)
                 Permissions.open(.microphone)
                 return
             default:
@@ -177,7 +253,7 @@ final class DictationEngine {
     }
 
     private func makeCapture() -> AudioCapture {
-        let c = AudioCapture()
+        let c = AudioCapture(preferredDeviceUID: settings.preferredMicUID)
         let hud = self.hud
         c.onLevels = { levels in MainActor.assumeIsolated { hud.push(levels) } }
         c.onLost = { MainActor.assumeIsolated { DictationEngine.shared.microphoneLost() } }
@@ -204,11 +280,23 @@ final class DictationEngine {
         self.transcriber = transcriber
         transcriber.start()
 
+        // If the user finished a hold-to-talk gesture while arming was still wrapping up,
+        // stop cleanly right after the stream starts so their audio still transcribes.
+        if pendingHoldStopRun == id {
+            pendingHoldStopRun = nil
+            Task { [weak self] in
+                try? await Task.sleep(nanoseconds: 120_000_000)
+                guard let self, self.run == id, self.state == .listening else { return }
+                self.stopListening()
+            }
+            return
+        }
+
         // A shortcut pressed by accident, or a dictation forgotten, would
         // otherwise run up the Doubao bill until the length limit.
         let started = Date()
         quietLimit = settings.quietStop
-        silence = SilenceWatch(limit: quietLimit, start: started)
+        silence = quietLimit > 0 ? SilenceWatch(limit: quietLimit, start: started) : nil
         autoStop = Task { [weak self] in
             while !Task.isCancelled {
                 try? await Task.sleep(nanoseconds: 500_000_000)
@@ -218,9 +306,18 @@ final class DictationEngine {
                     self.stopListening(.limit)
                     return
                 }
-                if self.silence?.expired(at: now) == true {
-                    self.stopListening(.quiet)
-                    return
+                if let silence = self.silence {
+                    if silence.expired(at: now) {
+                        self.stopListening(.quiet)
+                        return
+                    }
+                    let remaining = silence.remaining(at: now)
+                    let warnWindow = min(15.0, max(5.0, self.quietLimit / 3.0))
+                    if self.hud.link == .live, remaining <= warnWindow, remaining > 0 {
+                        self.hud.quietCountdown = Int(ceil(remaining))
+                    } else if self.hud.quietCountdown != nil {
+                        self.hud.quietCountdown = nil
+                    }
                 }
             }
         }
@@ -241,6 +338,9 @@ final class DictationEngine {
         state = .working
         autoStop?.cancel()
         silence = nil
+        holdSessionRun = nil
+        pendingHoldStopRun = nil
+        pressStartedAt = nil
         capture.stop()
         writer?.close()
         writer = nil
@@ -260,6 +360,7 @@ final class DictationEngine {
         }
         guard let audio = recordings.audio(recording.id), audio.count >= PCMTape.bytesPerSecond / 4 else {
             recordings.delete(recording.id)
+            onInventoryChange?()
             problem("That recording is gone", nil)
             return
         }
@@ -287,7 +388,10 @@ final class DictationEngine {
 
     private func heard(_ text: String, _ id: Int) {
         guard id == run else { return }
-        if state == .listening { silence?.heard(text) }
+        if state == .listening {
+            silence?.heard(text)
+            if hud.quietCountdown != nil { hud.quietCountdown = nil }
+        }
         switch hud.mode {
         case .listening, .transcribing: hud.liveText = text
         default: break
@@ -306,9 +410,11 @@ final class DictationEngine {
             if transcribing { hud.show(.transcribing(retry: 0)) }
         case .reconnecting(let attempt, _):
             silence?.connected(false)
+            if hud.quietCountdown != nil { hud.quietCountdown = nil }
             if state == .listening { hud.link = .reconnecting } else if transcribing { hud.show(.transcribing(retry: attempt)) }
         case .unavailable:
             silence?.connected(false)
+            if hud.quietCountdown != nil { hud.quietCountdown = nil }
             if state == .listening { hud.link = .recordingOnly }
         }
     }
@@ -409,7 +515,8 @@ final class DictationEngine {
         }
 
         lastResult = text
-        let pasted = await TextBridge.paste(text)
+        let restoreClipboard = settings.restoreClipboard
+        let pasted = await TextBridge.paste(text, allowPointerFallback: true, restoreClipboard: restoreClipboard)
         // A recording transcribed again was counted, if at all, the first time.
         if !again {
             UsageStore.shared.add(UsageRecord(kind: .dictation, audioSeconds: outcome.seconds, text: text, polish: polish,
@@ -419,42 +526,62 @@ final class DictationEngine {
         // Only words that are all in let the recording go.
         if outcome.isComplete { forgetSaved() }
         let missing = outcome.isComplete ? nil : "The last \(Self.duration(outcome.unconfirmedSeconds)) is missing"
+        let doneTitle: String = {
+            if restoreClipboard {
+                return translated ? "Translated and inserted" : "Inserted"
+            }
+            return translated ? "Translated, inserted and copied" : "Inserted and copied"
+        }()
+
         switch pasted {
         case .copied(let why):
             let title = translated ? "Translation copied to the clipboard" : "Copied to the clipboard"
+            let page: Page? = why.contains("General page") ? .general : nil
             if let missing {
+                let detail = "\(missing). \(Self.savedNote)"
                 Cue.play(.problem)
-                end(.notice(.init(tone: .warning, title: title, detail: "\(missing). \(Self.savedNote)")))
+                recordIssue(title, detail, page: page)
+                end(.notice(.init(tone: .warning, title: title, detail: detail)))
             } else if reason == .quiet {
-                end(.notice(.init(tone: .warning, title: title, detail: "\(quietNote) \(why)")))
+                let detail = "\(quietNote) \(why)"
+                recordIssue(title, detail, page: page)
+                end(.notice(.init(tone: .warning, title: title, detail: detail)))
             } else {
+                recordIssue(title, why, page: page)
                 end(.notice(.init(tone: .warning, title: title, detail: why)))
             }
         case .pasted:
             if let missing {
+                let title = "Inserted, but \(missing.prefix(1).lowercased() + missing.dropFirst())"
+                let detail = "\(Self.savedNote)\(outcome.problem.map { " Doubao: \($0)" } ?? "")"
                 Cue.play(.problem)
-                end(.notice(.init(tone: .warning, title: "Inserted, but \(missing.prefix(1).lowercased() + missing.dropFirst())",
-                                  detail: "\(Self.savedNote)\(outcome.problem.map { " Doubao: \($0)" } ?? "")")))
+                recordIssue(title, detail, page: nil)
+                end(.notice(.init(tone: .warning, title: title, detail: detail)))
             } else if let polishProblem {
+                let title = intent == .translate ? "Inserted as heard, untranslated" : "Inserted without polishing"
                 Cue.play(.problem)
-                end(.notice(.init(tone: .warning,
-                                  title: intent == .translate ? "Inserted as heard, untranslated" : "Inserted without polishing",
-                                  detail: polishProblem)))
+                recordIssue(title, polishProblem, page: .polish)
+                end(.notice(.init(tone: .warning, title: title, detail: polishProblem)))
             } else if let translateProblem {
+                let title = "Inserted without translating"
                 Cue.play(.problem)
-                end(.notice(.init(tone: .warning, title: "Inserted without translating", detail: translateProblem)))
+                recordIssue(title, translateProblem, page: .polish)
+                end(.notice(.init(tone: .warning, title: title, detail: translateProblem)))
             } else if reason == .limit {
-                end(.notice(.init(tone: .info, title: translated ? "Translated, inserted and copied" : "Inserted and copied",
+                lastIssue = nil
+                end(.notice(.init(tone: .info, title: doneTitle,
                                   detail: "Dictations stop at \(Int(Self.maxRecording / 60)) minutes. Press \(settings.shortcut.display) to go on.")))
             } else if reason == .quiet {
-                end(.notice(.init(tone: .info, title: translated ? "Translated, inserted and copied" : "Inserted and copied",
-                                  detail: quietNote)))
+                lastIssue = nil
+                end(.notice(.init(tone: .info, title: doneTitle, detail: quietNote)))
             } else if reason == .microphoneLost {
+                let detail = "The microphone went away, so the dictation stopped there."
                 Cue.play(.problem)
-                end(.notice(.init(tone: .warning, title: translated ? "Translated, inserted and copied" : "Inserted and copied",
-                                  detail: "The microphone went away, so the dictation stopped there.")))
+                recordIssue(doneTitle, detail, page: .speech)
+                end(.notice(.init(tone: .warning, title: doneTitle, detail: detail)))
             } else {
-                end(.done(translated ? "Translated, inserted and copied" : "Inserted and copied"))
+                lastIssue = nil
+                end(.done(doneTitle))
             }
         }
     }
@@ -470,6 +597,7 @@ final class DictationEngine {
     /// "30 seconds", "1 minute", "2 minutes".
     static func spoken(_ seconds: Double) -> String {
         let s = Int(seconds.rounded())
+        if s <= 0 { return "Never" }
         if s < 60 { return "\(s) seconds" }
         if s % 60 == 0 { return s == 60 ? "1 minute" : "\(s / 60) minutes" }
         return String(format: "%d:%02d minutes", s / 60, s % 60)
@@ -493,6 +621,7 @@ final class DictationEngine {
         recordings.prune()
         let left = recordings.all()
         guard !left.isEmpty else { return }
+        onInventoryChange?()
         hud.finish(.notice(.init(tone: .warning,
                                  title: left.count == 1 ? "A recording wasn't transcribed" : "\(left.count) recordings weren't transcribed",
                                  detail: "Nothing is lost: transcribe it again from the Murmur menu bar.")))
@@ -538,21 +667,44 @@ final class DictationEngine {
         lastResult = out.text
         if out.text == selection.text {
             UsageStore.shared.add(record)
+            lastIssue = nil
             end(.done(translating ? "Already in \(language)" : "Already reads well"))
             return
         }
         guard TextBridge.isStillSelected(selection) else {
             Clipboard.put(out.text)
             UsageStore.shared.add(record)
-            end(.notice(.init(tone: .warning, title: translating ? "Translation copied" : "Refined text copied",
-                              detail: "The selection changed, so Murmur left it alone. Paste with ⌘V.")))
+            let title = translating ? "Translation copied" : "Refined text copied"
+            let detail = "The selection changed, so Murmur left it alone. Paste with ⌘V."
+            recordIssue(title, detail, page: nil)
+            end(.notice(.init(tone: .warning, title: title, detail: detail)))
             return
         }
-        let pasted = await TextBridge.paste(out.text)
+        let restoreClipboard = settings.restoreClipboard
+        // Never click an unrelated text box under the pointer during a selection rewrite.
+        let pasted = await TextBridge.paste(out.text, allowPointerFallback: false, restoreClipboard: restoreClipboard)
         UsageStore.shared.add(record)
         switch pasted {
-        case .pasted: end(.done(translating ? "Translated, replaced and copied" : "Replaced and copied"))
-        case .copied(let why): end(.notice(.init(tone: .warning, title: "Copied to the clipboard", detail: why)))
+        case .pasted:
+            lastIssue = nil
+            let title: String
+            if restoreClipboard {
+                title = translating ? "Translated and replaced" : "Replaced"
+            } else {
+                title = translating ? "Translated, replaced and copied" : "Replaced and copied"
+            }
+            end(.done(title))
+        case .copied(let why):
+            if why.contains("isn't editable") {
+                // Translating or refining read-only text (webpage, PDF, received message):
+                // copying to clipboard is the clean expected result.
+                lastIssue = nil
+                end(.done(translating ? "Translation copied" : "Refined text copied"))
+            } else {
+                let page: Page? = why.contains("General page") ? .general : nil
+                recordIssue("Copied to the clipboard", why, page: page)
+                end(.notice(.init(tone: .warning, title: "Copied to the clipboard", detail: why)))
+            }
         }
     }
 
@@ -566,8 +718,9 @@ final class DictationEngine {
         let model = settings.openRouterModel.trimmingCharacters(in: .whitespacesAndNewlines)
         let hud = self.hud
         return try await client.polish(model: model, info: settings.modelInfo,
-                                       instructions: settings.prompt, input: text, source: source) { progress in
-            DispatchQueue.main.async { MainActor.assumeIsolated { hud.apply(progress) } }
+                                       instructions: settings.prompt, input: text, source: source,
+                                       vocabulary: settings.vocabularyTerms) { progress in
+            DispatchQueue.main.async { MainActor.assumeIsolated { hud.apply(progress, input: text) } }
         }
     }
 
@@ -578,11 +731,17 @@ final class DictationEngine {
         let hud = self.hud
         return try await client.translate(model: model, info: settings.modelInfo, instructions: settings.translatePrompt,
                                           input: text, language: targetLanguage) { progress in
-            DispatchQueue.main.async { MainActor.assumeIsolated { hud.apply(progress) } }
+            DispatchQueue.main.async { MainActor.assumeIsolated { hud.apply(progress, input: text) } }
         }
     }
 
+    private func recordIssue(_ title: String, _ detail: String?, page: Page?) {
+        lastIssue = LastIssue(title: title, detail: detail, date: Date(), page: page)
+    }
+
     private func end(_ mode: HUDModel.Mode) {
+        armingReveal?.cancel()
+        armingReveal = nil
         autoStop?.cancel()
         writer?.close()
         writer = nil
@@ -591,15 +750,17 @@ final class DictationEngine {
         capture = nil
         hud.finish(mode)
         state = .idle
+        onInventoryChange?()
     }
 
-    private func problem(_ title: String, _ detail: String?) {
+    private func problem(_ title: String, _ detail: String?, page: Page? = nil) {
         Cue.play(.problem)
+        recordIssue(title, detail, page: page)
         end(.notice(.init(tone: .error, title: title, detail: detail)))
     }
 
     private func setupProblem(_ title: String, _ detail: String, page: Page) {
-        problem(title, detail)
+        problem(title, detail, page: page)
         openSettings?(page)
     }
 }

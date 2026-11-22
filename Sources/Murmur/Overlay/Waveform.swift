@@ -7,13 +7,16 @@ import SwiftUI
 struct Waveform: View {
     let model: HUDModel
     let settling: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var state = WaveState()
 
     var body: some View {
-        TimelineView(.animation) { ctx in
+        TimelineView(.animation(paused: reduceMotion)) { ctx in
             Canvas { gc, size in
-                let t = ctx.date.timeIntervalSinceReferenceDate
-                let level = state.step(to: settling ? 0 : Double(model.level), at: t)
+                let t = reduceMotion ? 0.0 : ctx.date.timeIntervalSinceReferenceDate
+                let level = reduceMotion
+                    ? (settling ? 0.15 : 0.35)
+                    : state.step(to: settling ? 0 : Double(model.level), at: t)
                 let bars = max(6, Int(size.width / 6))
                 let barWidth: CGFloat = 3
                 let gap = (size.width - CGFloat(bars) * barWidth) / CGFloat(max(1, bars - 1))
@@ -21,7 +24,9 @@ struct Waveform: View {
                     let x = (Double(i) + 0.5) / Double(bars)
                     let envelope = pow(sin(.pi * x), 0.85)
                     var h: Double
-                    if settling {
+                    if reduceMotion {
+                        h = 0.18 + 0.46 * envelope * (settling ? 0.5 : 1.0)
+                    } else if settling {
                         h = 0.16 + 0.42 * envelope * (0.5 + 0.5 * sin(t * 6.5 - Double(i) * 0.7))
                     } else {
                         let wobble = 0.5 + 0.5 * sin(t * 7.3 + Double(i) * 0.62) * cos(t * 3.1 - Double(i) * 0.31)

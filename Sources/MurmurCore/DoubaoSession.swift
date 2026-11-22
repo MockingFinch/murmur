@@ -9,12 +9,16 @@ public struct DoubaoCredentials: Sendable, Equatable {
     public var resource: String
     /// Overrides the service URL (tests use a local server).
     public var endpoint: URL?
+    /// Optional domain vocabulary / hotwords to bias speech recognition.
+    public var hotwords: [String]
 
-    public init(appID: String = "", token: String, resource: String = DoubaoAPI.defaultResource, endpoint: URL? = nil) {
+    public init(appID: String = "", token: String, resource: String = DoubaoAPI.defaultResource,
+                endpoint: URL? = nil, hotwords: [String] = []) {
         self.appID = appID.trimmingCharacters(in: .whitespacesAndNewlines)
         self.token = token.trimmingCharacters(in: .whitespacesAndNewlines)
         self.resource = resource.trimmingCharacters(in: .whitespacesAndNewlines)
         self.endpoint = endpoint
+        self.hotwords = hotwords
     }
 
     public var isComplete: Bool { !token.isEmpty && !resource.isEmpty }
@@ -27,6 +31,7 @@ public struct DoubaoCredentials: Sendable, Equatable {
 /// runs on its own and reports partial text through `onPartial`.
 public final class DoubaoSession: @unchecked Sendable {
     private let task: URLSessionWebSocketTask
+    private let hotwords: [String]
     private let onPartial: @Sendable (String) -> Void
 
     private let lock = NSLock()
@@ -59,6 +64,7 @@ public final class DoubaoSession: @unchecked Sendable {
 
         task = urlSession.webSocketTask(with: request)
         task.maximumMessageSize = 4 << 20
+        self.hotwords = credentials.hotwords
         self.onPartial = onPartial
     }
 
@@ -89,7 +95,7 @@ public final class DoubaoSession: @unchecked Sendable {
         task.resume()
         let start = DoubaoFrame(kind: .fullClientRequest, flags: .sequence, serialization: .json,
                                 compression: .gzip, sequence: 1,
-                                payload: DoubaoAPI.startRequest())
+                                payload: DoubaoAPI.startRequest(hotwords: hotwords))
         let bytes = try DoubaoCodec.encode(start)
         let timedOut = Flag()
         do {

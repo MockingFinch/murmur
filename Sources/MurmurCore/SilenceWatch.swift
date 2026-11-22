@@ -47,6 +47,9 @@ public struct SilenceWatch: Sendable {
         banked + (since.map { max(0, now.timeIntervalSince($0)) } ?? 0)
     }
 
+    /// Seconds of quiet left before the dictation ends.
+    public func remaining(at now: Date = Date()) -> TimeInterval { max(0, limit - quiet(at: now)) }
+
     /// Quiet for long enough that the dictation should end.
     public func expired(at now: Date = Date()) -> Bool { quiet(at: now) >= limit }
 }

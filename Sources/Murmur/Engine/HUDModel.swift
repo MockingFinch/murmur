@@ -6,6 +6,8 @@ import MurmurCore
 @MainActor @Observable
 final class HUDModel {
     enum Mode: Hashable {
+        /// Waiting briefly for selection probe before listening begins.
+        case arming
         case listening
         /// Waiting for Doubao's complete text; `retry` counts connections
         /// in a row that failed.
@@ -20,7 +22,7 @@ final class HUDModel {
         var isResult: Bool {
             switch self {
             case .done, .notice, .cancelled: return true
-            case .listening, .transcribing, .model: return false
+            case .arming, .listening, .transcribing, .model: return false
             }
         }
     }
@@ -52,7 +54,7 @@ final class HUDModel {
         didSet {
             guard mode != oldValue else { return }
             resultOrigin = mode?.isResult == true ? oldValue : nil
-            onModeChange?(mode)
+            onModeChange?(oldValue, mode)
         }
     }
     /// The session content that fades as a result appears.
@@ -65,21 +67,28 @@ final class HUDModel {
     /// The language a translating session will end in; nil when it won't translate.
     var target: String?
     var link = Link.live
+    /// Set briefly after a first Esc press on a substantial recording.
+    var escapeConfirm = false
+    /// Countdown seconds shown in the final moments before quiet auto-stop triggers.
+    var quietCountdown: Int?
     /// Increments to pulse the status icon for a busy shortcut or an error.
     private(set) var attentionPulses = 0
 
     /// Loudness for the waveform, read every frame (not observed, to keep
     /// the rest of the capsule from re-rendering 50 times a second).
     @ObservationIgnored var level: Float = 0
-    @ObservationIgnored var onModeChange: ((Mode?) -> Void)?
+    @ObservationIgnored var onModeChange: ((Mode?, Mode?) -> Void)?
     @ObservationIgnored private var dismissal: Task<Void, Never>?
+    @ObservationIgnored private var escapeReset: Task<Void, Never>?
 
     func reset() {
         dismissal?.cancel()
+        clearEscapeConfirm()
         liveText = ""
         preview = ""
         target = nil
         link = .live
+        quietCountdown = nil
         level = 0
         startedAt = Date()
     }
@@ -92,6 +101,10 @@ final class HUDModel {
 
     func show(_ mode: Mode) {
         dismissal?.cancel()
+        if mode != .listening {
+            clearEscapeConfirm()
+            quietCountdown = nil
+        }
         if case .model(let job, _, _) = mode, job != currentJob { waitingSince = Date() }
         self.mode = mode
     }
@@ -109,16 +122,34 @@ final class HUDModel {
         if let peak = levels.max() { level = peak }
     }
 
+    func armEscapeConfirm() {
+        escapeReset?.cancel()
+        escapeConfirm = true
+        escapeReset = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: 2_500_000_000)
+            guard !Task.isCancelled else { return }
+            self?.escapeConfirm = false
+        }
+    }
+
+    func clearEscapeConfirm() {
+        escapeReset?.cancel()
+        escapeReset = nil
+        if escapeConfirm { escapeConfirm = false }
+    }
+
     /// Shows a last state, then hides after a moment fitted to it.
     func finish(_ mode: Mode) {
         dismissal?.cancel()
+        clearEscapeConfirm()
+        quietCountdown = nil
         self.mode = mode
         if case .notice(let n) = mode, n.tone == .error { nudge() }
         let hold: Double
         switch mode {
-        case .done: hold = 1.1
+        case .done: hold = 1.15
         case .cancelled: hold = 0.58
-        case .notice(let n): hold = n.detail == nil ? 2.2 : ((n.detail?.count ?? 0) > 64 ? 6 : 4.2)
+        case .notice(let n): hold = n.detail == nil ? 2.4 : ((n.detail?.count ?? 0) > 64 ? 6.2 : 4.2)
         default: hold = 1.5
         }
         dismissal = Task { [weak self] in
@@ -130,13 +161,15 @@ final class HUDModel {
 
     func hide() {
         dismissal?.cancel()
+        clearEscapeConfirm()
+        quietCountdown = nil
         mode = nil
         level = 0
     }
 
     func nudge() { attentionPulses += 1 }
 
-    func apply(_ progress: PolishProgress) {
+    func apply(_ progress: PolishProgress, input: String = "") {
         guard case .model(let job, let retry, let thinking) = mode else { return }
         switch progress {
         case .attempt:
@@ -144,8 +177,11 @@ final class HUDModel {
         case .thinking:
             if !thinking { mode = .model(job, retry: retry, thinking: true) }
         case .text(let t):
-            liveText = t
-            if thinking { mode = .model(job, retry: retry, thinking: false) }
+            let cleaned = PolishPrompt.clean(t, input: input)
+            if !cleaned.isEmpty {
+                liveText = cleaned
+                if thinking { mode = .model(job, retry: retry, thinking: false) }
+            }
         case .retrying(let next, _):
             liveText = ""
             mode = .model(job, retry: next, thinking: false)

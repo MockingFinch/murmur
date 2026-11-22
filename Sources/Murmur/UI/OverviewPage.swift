@@ -11,7 +11,8 @@ struct OverviewPage: View {
 
     var body: some View {
         let summary = store.summary
-        Hero(shortcut: settings.shortcut)
+        Hero(shortcut: settings.shortcut, translateShortcut: settings.translateShortcut,
+             targetLanguage: TranslationLanguages.native(TranslatePrompt.language(settings.translateLanguage)))
 
         if !setupComplete {
             PageSection(title: "Get set up") {
@@ -20,62 +21,74 @@ struct OverviewPage: View {
             .transition(.opacity.combined(with: .move(edge: .top)))
         }
 
-        PageSection(title: "Today") {
-            HStack(spacing: 12) {
-                StatTile(value: Format.count(summary.today.characters), label: "characters",
-                         symbol: "character.cursor.ibeam", tint: Brand.azure)
-                StatTile(value: Format.minutes(summary.today.minutesSaved), label: "saved against typing",
-                         symbol: "hourglass", tint: Brand.mint)
-                StatTile(value: Format.count(summary.today.uses), label: summary.today.uses == 1 ? "use" : "uses",
-                         symbol: "waveform", tint: Brand.coral)
+        if setupComplete || summary.allTime.uses > 0 {
+            PageSection(title: "Today") {
+                HStack(spacing: 12) {
+                    StatTile(value: Format.count(summary.today.characters), label: "characters",
+                             symbol: "character.cursor.ibeam", tint: Brand.azure)
+                    StatTile(value: Format.minutes(summary.today.minutesSaved), label: "saved against typing",
+                             symbol: "hourglass", tint: Brand.mint)
+                    StatTile(value: Format.count(summary.today.uses), label: summary.today.uses == 1 ? "use" : "uses",
+                             symbol: "waveform", tint: Brand.coral)
+                }
             }
-        }
 
-        PageSection(title: "Last 14 days") {
-            Card { ActivityChart(days: summary.days) }
-        }
+            PageSection(title: "Last 14 days") {
+                Card { ActivityChart(days: summary.days) }
+            }
 
-        PageSection(title: "All time", trailing: summary.allTime.uses > 0 ? AnyView(resetButton) : nil) {
-            Card(padding: 4) {
-                let all = summary.allTime
-                Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
-                    GridRow {
-                        Figure(title: "Characters", value: Format.count(all.characters))
-                        Figure(title: "Time saved", value: Format.minutes(all.minutesSaved))
-                        Figure(title: "Spoken", value: Format.minutes(all.audioSeconds / 60))
-                    }
-                    Divider().gridCellUnsizedAxes(.horizontal).padding(.horizontal, 14).opacity(0.6)
-                    GridRow {
-                        Figure(title: "Dictations", value: Format.count(all.dictations))
-                        Figure(title: "Selections", value: Format.count(all.refines),
-                               help: "Selected text you refined or translated.")
-                        Figure(title: "Translations", value: Format.count(all.translations),
-                               help: "Dictations and selections that went in translated.")
-                    }
-                    Divider().gridCellUnsizedAxes(.horizontal).padding(.horizontal, 14).opacity(0.6)
-                    GridRow {
-                        Figure(title: "Polished", value: summary.polishRate.map { Format.percent($0) } ?? "—",
-                               help: "Of the times the model was asked, how often its text went in.")
-                        Figure(title: "Wait after stop", value: summary.medianWait.map { Format.seconds($0) } ?? "—",
-                               help: "Median time from your second press to the text appearing (last 50 uses).")
-                        Figure(title: "Day streak", value: summary.streak == 0 ? "—" : "\(summary.streak)")
+            PageSection(title: "All time", trailing: summary.allTime.uses > 0 ? AnyView(resetButton) : nil) {
+                Card(padding: 4) {
+                    let all = summary.allTime
+                    Grid(alignment: .leading, horizontalSpacing: 0, verticalSpacing: 0) {
+                        GridRow {
+                            Figure(title: "Characters", value: Format.count(all.characters))
+                            Figure(title: "Time saved", value: Format.minutes(all.minutesSaved))
+                            Figure(title: "Spoken", value: Format.minutes(all.audioSeconds / 60))
+                        }
+                        Divider().gridCellUnsizedAxes(.horizontal).padding(.horizontal, 14).opacity(0.6)
+                        GridRow {
+                            Figure(title: "Dictations", value: Format.count(all.dictations))
+                            Figure(title: "Selections", value: Format.count(all.refines),
+                                   help: "Selected text you refined or translated.")
+                            Figure(title: "Translations", value: Format.count(all.translations),
+                                   help: "Dictations and selections that went in translated.")
+                        }
+                        Divider().gridCellUnsizedAxes(.horizontal).padding(.horizontal, 14).opacity(0.6)
+                        GridRow {
+                            Figure(title: "Polished", value: summary.polishRate.map { Format.percent($0) } ?? "—",
+                                   help: "Of the times the model was asked, how often its text went in.")
+                            Figure(title: "Wait after stop", value: summary.medianWait.map { Format.seconds($0) } ?? "—",
+                                   help: "Median time from your second press to the text appearing (last 50 uses).")
+                            Figure(title: "Day streak", value: summary.streak == 0 ? "—" : "\(summary.streak)")
+                        }
                     }
                 }
             }
+
+            HStack(spacing: 7) {
+                Image(systemName: "lock.fill").font(.system(size: 10))
+                Text("Statistics are measures only. Murmur never stores what you said or wrote.")
+            }
+            .font(.system(size: 11.5))
+            .foregroundStyle(.tertiary)
+            .padding(.horizontal, 4)
+        } else {
+            HStack(spacing: 7) {
+                Image(systemName: "chart.bar").font(.system(size: 11))
+                Text("Usage counts and your 14-day chart will appear here once setup is complete. Murmur never stores your text.")
+            }
+            .font(.system(size: 12))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 4)
         }
 
-        HStack(spacing: 7) {
-            Image(systemName: "lock.fill").font(.system(size: 10))
-            Text("Statistics are measures only. Murmur never stores what you said or wrote.")
-        }
-        .font(.system(size: 11.5))
-        .foregroundStyle(.tertiary)
-        .padding(.horizontal, 4)
-        .confirmationDialog("Reset all statistics?", isPresented: $confirmReset) {
-            Button("Reset Statistics", role: .destructive) { withAnimation(Motion.smooth) { store.reset() } }
-        } message: {
-            Text("This clears every count and the chart. It can't be undone.")
-        }
+        Color.clear.frame(height: 0)
+            .confirmationDialog("Reset all statistics?", isPresented: $confirmReset) {
+                Button("Reset Statistics", role: .destructive) { withAnimation(Motion.smooth) { store.reset() } }
+            } message: {
+                Text("This clears every count and the chart. It can't be undone.")
+            }
     }
 
     private var resetButton: some View {
@@ -93,10 +106,21 @@ struct OverviewPage: View {
                      detail: "Murmur listens through Doubao's streaming recognition.") { navigator.page = .speech }
         RowDivider().padding(.vertical, -6)
         ChecklistRow(done: readiness.micReady, title: "Allow the microphone",
-                     detail: "Asked the first time you dictate, or set it now.") { navigator.page = .shortcut }
+                     detail: "Required to hear you while dictating.",
+                     buttonTitle: readiness.microphone == .notDetermined ? "Allow" : "Open Settings") {
+            if readiness.microphone == .notDetermined {
+                Task { _ = await Permissions.requestMicrophone(); readiness.refresh() }
+            } else {
+                Permissions.open(.microphone)
+            }
+        }
         RowDivider().padding(.vertical, -6)
         ChecklistRow(done: readiness.accessibility, title: "Allow \(Permissions.accessibilityName)",
-                     detail: "To read your selection and paste the text where your cursor is.") { navigator.page = .shortcut }
+                     detail: "To read your selection and paste the text where your cursor is.",
+                     buttonTitle: "Open Settings") {
+            Permissions.requestAccessibility()
+            Permissions.open(.accessibility)
+        }
         RowDivider().padding(.vertical, -6)
         ChecklistRow(done: settings.polishReady, optional: true, title: "Connect a language model",
                      detail: "Without it, the transcript goes in as Doubao heard it.") { navigator.page = .polish }
@@ -105,9 +129,11 @@ struct OverviewPage: View {
 
 // MARK: - Hero
 
-/// The one thing to know: press, speak, press.
+/// The core interactions at a glance: dictate, translate, cancel.
 private struct Hero: View {
     let shortcut: Shortcut
+    let translateShortcut: Shortcut
+    let targetLanguage: String
 
     var body: some View {
         HStack(alignment: .center, spacing: 26) {
@@ -121,13 +147,13 @@ private struct Hero: View {
                         .foregroundStyle(.white.opacity(0.6))
                 }
                 VStack(alignment: .leading, spacing: 6) {
-                    Text("Press to talk. Press again to insert.")
+                    Text("Tap to toggle. Hold to talk.")
                         .font(.system(size: 21, weight: .bold))
                         .tracking(-0.3)
                         .foregroundStyle(.white)
-                    Text("Select text first and the same shortcut rewrites it with your prompt instead. The result is also left on your clipboard.")
+                    Text("Select text first and the same shortcut rewrites it with your prompt. Press \(translateShortcut.display) to translate into \(targetLanguage), or Esc while listening to cancel.")
                         .font(.system(size: 12.5))
-                        .foregroundStyle(.white.opacity(0.68))
+                        .foregroundStyle(.white.opacity(0.72))
                         .fixedSize(horizontal: false, vertical: true)
                 }
             }
@@ -158,7 +184,7 @@ private struct HeroWave: View {
     var body: some View {
         TimelineView(.animation(paused: reduceMotion)) { ctx in
             Canvas { gc, size in
-                let t = ctx.date.timeIntervalSinceReferenceDate
+                let t = reduceMotion ? 0.0 : ctx.date.timeIntervalSinceReferenceDate
                 let bars = 15
                 let w: CGFloat = 4
                 let gap = (size.width - CGFloat(bars) * w) / CGFloat(bars - 1)
@@ -188,41 +214,55 @@ private struct ChecklistRow: View {
     var optional = false
     let title: String
     let detail: String
+    var buttonTitle: String? = nil
     let action: () -> Void
+    @State private var hovering = false
 
     var body: some View {
-        Button(action: action) {
-            HStack(spacing: 12) {
-                ZStack {
-                    Circle().strokeBorder(Color.hairline, lineWidth: 1.5).opacity(done ? 0 : 1)
-                    Image(systemName: "checkmark.circle.fill")
-                        .font(.system(size: 18))
-                        .foregroundStyle(Brand.mint)
-                        .scaleEffect(done ? 1 : 0.4)
-                        .opacity(done ? 1 : 0)
+        HStack(spacing: 12) {
+            ZStack {
+                Circle().strokeBorder(Color.hairline, lineWidth: 1.5).opacity(done ? 0 : 1)
+                Image(systemName: "checkmark.circle.fill")
+                    .font(.system(size: 18))
+                    .foregroundStyle(Brand.mint)
+                    .scaleEffect(done ? 1 : 0.4)
+                    .opacity(done ? 1 : 0)
+            }
+            .frame(width: 18, height: 18)
+            VStack(alignment: .leading, spacing: 2) {
+                HStack(spacing: 6) {
+                    Text(title).font(.system(size: 13, weight: .medium))
+                        .strikethrough(done, color: .secondary)
+                        .foregroundStyle(done ? .secondary : .primary)
+                    if optional { Badge(text: "Optional") }
                 }
-                .frame(width: 18, height: 18)
-                VStack(alignment: .leading, spacing: 2) {
-                    HStack(spacing: 6) {
-                        Text(title).font(.system(size: 13, weight: .medium))
-                            .strikethrough(done, color: .secondary)
-                            .foregroundStyle(done ? .secondary : .primary)
-                        if optional { Badge(text: "Optional") }
-                    }
-                    Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
-                }
-                Spacer()
-                if !done {
+                Text(detail).font(.system(size: 11.5)).foregroundStyle(.secondary)
+            }
+            Spacer()
+            if !done {
+                if let buttonTitle {
+                    Button(buttonTitle, action: action)
+                        .buttonStyle(.glass)
+                        .controlSize(.small)
+                } else {
                     Image(systemName: "chevron.right")
                         .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.tertiary)
                 }
             }
-            .padding(.horizontal, 12)
-            .padding(.vertical, 10)
-            .contentShape(Rectangle())
         }
-        .buttonStyle(.plain)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 10)
+        .background(
+            RoundedRectangle(cornerRadius: 10, style: .continuous)
+                .fill(hovering && !done && buttonTitle == nil ? Color.primary.opacity(0.035) : .clear)
+        )
+        .contentShape(Rectangle())
+        .onTapGesture {
+            if buttonTitle == nil { action() }
+        }
+        .onHover { hovering = $0 }
+        .animation(Motion.gentle, value: hovering)
         .animation(.spring(response: 0.4, dampingFraction: 0.6), value: done)
     }
 }
@@ -288,9 +328,16 @@ private struct ActivityChart: View {
     let days: [UsageSummary.Day]
     @State private var hovered: Date?
 
+    private var crossesMonth: Bool {
+        guard let first = days.first?.date, let last = days.last?.date else { return false }
+        let cal = Calendar.current
+        return cal.component(.month, from: first) != cal.component(.month, from: last)
+    }
+
     var body: some View {
         let peak = days.map(\.characters).max() ?? 0
         let focus = days.first { $0.date == hovered } ?? days.last
+        let showMonth = crossesMonth
         VStack(alignment: .leading, spacing: 14) {
             HStack(alignment: .firstTextBaseline, spacing: 8) {
                 if let focus {
@@ -319,9 +366,14 @@ private struct ActivityChart: View {
             .chartYScale(domain: 0 ... max(peak, 1) * 11 / 10)
             .chartYAxis(.hidden)
             .chartXAxis {
-                AxisMarks(values: .stride(by: .day, count: 2)) { _ in
-                    AxisValueLabel(format: .dateTime.day(), centered: true)
-                        .font(.system(size: 10))
+                AxisMarks(values: .stride(by: .day, count: 2)) { value in
+                    if showMonth {
+                        AxisValueLabel(format: .dateTime.month(.abbreviated).day(), centered: true)
+                            .font(.system(size: 10))
+                    } else {
+                        AxisValueLabel(format: .dateTime.day(), centered: true)
+                            .font(.system(size: 10))
+                    }
                 }
             }
             .chartOverlay { proxy in

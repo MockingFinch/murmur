@@ -1,12 +1,12 @@
 # Developing Murmur
 
-How to build Murmur from source, test it, make a release and regenerate the README's pictures. For what Murmur is and why, see the [README](../README.md) and [Why Murmur exists](BACKGROUND.md).
+Build, test, sign, release, and regenerate media for Murmur. For product background and design decisions, see [README.md](../README.md) and [docs/BACKGROUND.md](BACKGROUND.md).
 
 ## Requirements
 
-- An Apple silicon Mac with macOS 26 or later
-- The Swift 6 toolchain and the macOS 26 SDK (Xcode 26 or later)
-- For the README's demos: `ffmpeg` with `libwebp` (`brew install ffmpeg`), and `cwebp` for the stills (`brew install webp`)
+- Apple silicon Mac running macOS 26 or later
+- Swift 6 toolchain and macOS 26 SDK (Xcode 26 or later)
+- Optional, for regenerating README media: `ffmpeg` with `libwebp` (`brew install ffmpeg`) and `cwebp` (`brew install webp`)
 
 ## Build and run
 
@@ -14,17 +14,19 @@ How to build Murmur from source, test it, make a release and regenerate the READ
 scripts/build.sh --open
 ```
 
-This builds `build/Murmur.app` and launches it. Without `--open`, it only builds.
+Builds `build/Murmur.app` and launches it. Omit `--open` to build without launching.
 
-### Signing, so permissions survive rebuilds
+### Local code signing
 
-macOS remembers Accessibility and Microphone permissions by an app's signature. Builds are ad-hoc signed by default, so each one looks like a new app: its Accessibility entry has to be removed and allowed again after every rebuild. To avoid that, create a local signing certificate once:
+macOS ties Microphone and Accessibility permissions to an app's signature. Ad-hoc builds look like a brand-new binary every time, forcing you to remove and re-add Murmur in Accessibility settings after each rebuild.
+
+To avoid that, generate a persistent local signing certificate once:
 
 ```bash
 scripts/setup-signing.sh
 ```
 
-It lives in its own keychain file in `~/Library/Application Support/Murmur/Signing`, separate from your login keychain and outside the repo. Every later build is signed with it. To sign with your own certificate instead, set `MURMUR_SIGN_IDENTITY`, for example `"Apple Development: you@example.com (TEAMID)"`.
+This creates a standalone keychain in `~/Library/Application Support/Murmur/Signing` (separate from your login keychain and outside the repo) that subsequent builds use automatically. To sign with a different identity instead, set `MURMUR_SIGN_IDENTITY` (for example, `"Apple Development: you@example.com (TEAMID)"`).
 
 ## Tests
 
@@ -32,47 +34,47 @@ It lives in its own keychain file in `~/Library/Application Support/Murmur/Signi
 swift test
 ```
 
-The tests run against local fake servers, so they need no keys and no network:
+All tests run against local fake servers (`FakeServers.swift`), requiring no API keys or network access:
 
-- `CoreTests`: the Doubao binary protocol, prompts, model listings, answer parsing, statistics and shortcuts
-- `NetworkTests`: streaming, retries, timeouts and stalls against a fake Doubao server and a fake model API
-- `ResilienceTests`: recognition that survives dropped connections, refusals and a server that never returns
-- `RecordingStoreTests`: recordings written to disk as they grow, listed and cleaned up
-- `SilenceWatchTests`: when a quiet dictation ends, and that time spent reconnecting doesn't count
+- `CoreTests`: Doubao binary framing, prompt assembly/cleaning, OpenRouter model parsing, usage math, and shortcut validation
+- `NetworkTests`: WebSocket streaming, retries, timeouts, and stream stalls against fake Doubao and LLM endpoints
+- `ResilienceTests`: Mid-session disconnects, non-retryable rejections, and permanent offline fallbacks
+- `RecordingStoreTests`: Incremental PCM disk writes, listing, and retention cleanup
+- `SilenceWatchTests`: Quiet-timeout expiration and excluding reconnect intervals from quiet time
 
-## Release
+## Release process
 
-1. Raise `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`.
+1. Bump `CFBundleShortVersionString` and `CFBundleVersion` in `Resources/Info.plist`.
 2. Run:
    ```bash
    scripts/release.sh
    ```
-   It runs the tests, builds, and writes `build/Murmur-<version>.dmg`, `build/Murmur-<version>.zip` and `build/Murmur-<version>.sha256`.
-3. Publish all three on a GitHub release tagged `v<version>`.
+   This runs `swift test`, builds the app, and writes `build/Murmur-<version>.dmg`, `build/Murmur-<version>.zip`, and `build/Murmur-<version>.sha256`.
+3. Upload all three artifacts to a GitHub release tagged `v<version>`.
 
-Sign releases with the same certificate every time, so users keep their permissions across updates.
+Always sign releases with the same certificate so existing users retain their macOS Accessibility permissions across updates.
 
-## Development aids
+## Development utilities
 
-The app has a few command-line modes for development. None of them reads the real API keys.
+Murmur includes built-in headless CLI modes for inspecting UI states and generating docs media. None of them touch your real API keys.
 
 ```bash
-.build/debug/Murmur --snapshot /tmp/murmur               # every capsule state and settings page, as PNGs
-.build/debug/Murmur --snapshot /tmp/murmur --configured  # …as a user who has finished setup sees them
-.build/debug/Murmur --check-navigation                   # checks that switching pages redraws the window
+.build/debug/Murmur --snapshot /tmp/murmur               # Render all capsule states and settings pages as PNGs
+.build/debug/Murmur --snapshot /tmp/murmur --configured  # Same, using placeholder keys and granted permissions
+.build/debug/Murmur --check-navigation                   # Verify sidebar page switching redraws the window
 ```
 
-`--configured` shows placeholder keys and both permissions as granted, without touching either.
+`--configured` injects fake placeholder keys and simulates granted Microphone/Accessibility permissions without modifying system state.
 
-### The README's pictures
+### Regenerating README screenshots and demos
 
-The stills and demos in `docs/media` are drawn by the app itself, offscreen, so they always show the current interface. Use a release build: the demos are recorded in real time and need the speed.
+All stills and animated WebPs under `docs/media/` are rendered offscreen directly by the app. Use a release build so real-time demo capture runs at full speed:
 
 ```bash
 swift build -c release --product Murmur
 ```
 
-**Stills:** the Overview, Speech, Translate and Polish pages, light and dark, and the capsule's states:
+**Stills** (Overview, Speech, and Translate windows in light/dark mode, plus capsule states):
 
 ```bash
 .build/release/Murmur --product-shots /tmp/shots
@@ -82,7 +84,7 @@ done; done
 cwebp -quiet -q 90 -m 6 /tmp/shots/capsule.png -o docs/media/capsule.webp
 ```
 
-**Demos:** four scripted films (`dictate`, `translate`, `rewrite`, `offline`), each written as numbered frames plus a `frames.txt` that holds every frame's duration. `--only <name>` records just one.
+**Animated demos** (`dictate`, `translate`, `rewrite`, `offline`): each outputs numbered PNG frames and a `frames.txt` timing manifest. Pass `--only <name>` to capture a single demo.
 
 ```bash
 .build/release/Murmur --film /tmp/film
@@ -94,52 +96,50 @@ for n in dictate translate rewrite offline; do
 done
 ```
 
-The scripts, mock windows and wallpaper are in `Sources/Murmur/App/Films.swift`, the stills in `ProductShots.swift`. Keep each demo under about 1.5 MB, so the README loads quickly.
+Demo scripts, mock app windows, and wallpapers live in `Sources/Murmur/App/Films.swift`; stills live in `Sources/Murmur/App/ProductShots.swift`. Aim to keep each animated `.webp` under ~1.5 MB so the README loads cleanly.
 
 ## Code layout
 
-- `Sources/MurmurCore`: everything without UI. The Doubao binary protocol and streaming session, recognition that survives dropped connections (`ResilientTranscriber`), recordings on disk (`RecordingStore`), noticing a dictation that has gone quiet (`SilenceWatch`), the client for OpenAI-compatible model APIs, the polish and translate prompts, shortcuts and the statistics math.
-- `Sources/Murmur`: the app.
-  - `Engine/` runs a session from shortcut to insertion, and holds the capsule's state.
-  - `System/` handles hotkeys, audio capture, sounds, permissions, saved keys and settings, and reading and inserting text.
-  - `Overlay/` is the capsule. `UI/` is the settings window.
-  - `App/` is the menu bar, launch, and the development aids above.
+- `Sources/MurmurCore`: Platform-agnostic core logic, including the Doubao binary codec and WebSocket session, reconnectable transcriber (`ResilientTranscriber`), local PCM storage (`RecordingStore`), quiet-timeout tracker (`SilenceWatch`), OpenAI-compatible streaming client (`OpenRouterClient`), polish/translate prompts, shortcut definitions, and usage math.
+- `Sources/Murmur`: macOS app target:
+  - `Engine/`: Session orchestration (`DictationEngine`) and capsule view state (`HUDModel`).
+  - `System/`: Global hotkeys, `AVAudioEngine` capture, synthesized audio cues, permission checks, settings/key storage, and Accessibility/clipboard text bridging.
+  - `Overlay/`: Non-activating floating capsule (`HUDPanel`, `HUDView`, `Waveform`).
+  - `UI/`: Resizable SwiftUI settings window and pages.
+  - `App/`: Menu bar controller, app lifecycle, and offscreen snapshot/film tools.
 
-The capsule's glass animates its measured width and height around a fixed bottom-center anchor. Its content lays out separately, so a result can fade in while the outgoing transcript fades away. Busy and error feedback pulses the status icon inside the capsule. Settings pages scroll inside the resizable macOS window.
+In `HUDView`, the glass capsule animates its measured width and height around a fixed horizontal center (anchored at the bottom or top edge depending on **General → Floating bar position**) on the screen containing the focused window. Active and result contents lay out independently so outgoing transcripts and incoming confirmations crossfade cleanly, and streaming model jobs hold a height floor equal to the preview transcript to avoid collapsing on the first token. Busy and error cues pulse the status icon inside the capsule rather than shifting the window frame, and all capsule animations respect `accessibilityReduceMotion`.
 
-## How failures are handled
+## Failure handling reference
 
-What Murmur does when something goes wrong, in detail. The rule behind all of it: what the user said is never thrown away.
+Summary of how Murmur behaves under network, audio, and API errors:
 
-**Recognition**
+**Speech recognition (Doubao)**
 
-- If the stream to Doubao drops while the user speaks, the capsule shows **Reconnecting**. Murmur keeps every sentence Doubao has confirmed, opens a new connection and sends only the audio after the last confirmed one, faster than real time until it catches up. Nothing is transcribed or billed twice.
-- While the user is speaking, it never gives up. After they stop, it gives up after 5 tries in a row that get nothing back. What Doubao confirmed then goes in, along with the words still in progress, and the capsule says how much at the end is missing.
-- If Doubao refuses partway (a key or quota problem), the capsule shows **Recording only**: recording goes on, and what was confirmed until then goes in.
-- If the microphone disappears and no other takes over, the dictation ends and what was said until then goes in.
+- **Mid-speech disconnect:** The capsule displays **Reconnecting**. Murmur preserves every confirmed utterance, opens a fresh WebSocket, and replays only unconfirmed audio faster than real time until caught up, avoiding duplicate transcription and double billing.
+- **Persistent failure:** While you're still speaking, reconnection retries indefinitely. Once you stop, Murmur gives up after 5 consecutive attempts with no new confirmations, delivers everything confirmed plus any in-progress words, and reports how many trailing seconds are missing.
+- **Non-retryable refusal (auth, quota, config):** The capsule switches to **Recording only**, continues capturing audio locally, and inserts whatever was confirmed before the error.
+- **Lost microphone:** If the active input disappears and no fallback device takes over, recording ends cleanly and processes what was captured so far.
 
-**Recordings**
+**Local recordings**
 
-- Each dictation is written to `~/Library/Application Support/Murmur/Recordings` a moment behind the microphone (folder `0700`, files `0600`), and deleted once its text is in.
-- If the text came back incomplete, or not at all, the recording stays, for **Transcribe Again** in the menu bar: it runs the recording through Doubao, polishing and translation again and inserts the result.
-- A recording cut off by a crash or a quit is offered at the next launch.
-- Pressing Esc while Murmur is listening cancels the session and discards the recording. Murmur registers Esc as a global hotkey only while listening, including during reconnection. The menu bar's **Cancel** also works after stopping and keeps the recording in that case.
-- When a recording is discarded, the **Cancelled** confirmation fades into the contracting capsule and then fades out in place.
-- Recordings are kept for 7 days at most. Ones shorter than 0.3 seconds are discarded.
+- Audio is flushed to `~/Library/Application Support/Murmur/Recordings` (directory `0700`, files `0600`) continuously during capture and deleted as soon as complete text is delivered.
+- Incomplete or failed sessions keep their `.pcm` file on disk so you can run **Transcribe Again** from the menu bar (including the original polish/translate pipeline).
+- Recordings interrupted by a crash or app quit are surfaced at next launch.
+- Pressing `Esc` while listening (including while reconnecting) cancels immediately for short takes (< 10 seconds and < 20 visible characters) and requires a second `Esc` within 2.5 seconds once substantial speech has been captured, preventing accidental deletion of long dictations. Using **Cancel** from the menu bar after stopping speaking aborts the wait while preserving the recording on disk.
+- Saved recordings expire after 7 days; clips shorter than 0.3 seconds are discarded automatically. Individual saved recordings can be transcribed or deleted from the menu bar, and the most recent warning or error stays accessible in the menu bar until dismissed or cleared by a clean completion.
 
-**The model**
+**Language model (Polish / Translate)**
 
-- A local formatting check removes a `~~` wrapper from the entire result before insertion or copying. It runs on speech recognition output and on final model responses from polishing and translation.
-- One request carries the whole text. It gets up to 180 seconds, retries included (Polish → Timeout).
-- Keep-alives count as progress. Only 20 seconds of total silence counts as a stall.
-- A failed request is sent again, up to 5 attempts in all, honoring `Retry-After`. Errors a new request can't fix (a wrong key, no credits, an unknown model) skip the wait.
-- Translating works the same way, with its own 5 attempts.
-- If polishing still fails, the transcript goes in as Doubao heard it. If translating fails, the polished text goes in. Whatever goes in is also on the clipboard.
-- An answer cut off at the model's length limit is never inserted, since it would drop the end of what was said. The full transcript goes in instead. When OpenRouter lists how much a model can write in one answer, Murmur never asks for more.
-- On OpenRouter, Murmur asks each model for the least thinking it allows. Polishing gains nothing from it, and thinking by default can take a minute.
-- The connection to the model opens while the user is still speaking, so the answer doesn't wait on DNS and TLS after they stop.
+- Before inserting or copying, Murmur strips stray `~~` strikethrough wrappers from final speech and model output (in addition to cleaning echoed XML tags, code fences, and added surrounding quotes).
+- Each job runs as a single streaming request with a default 180-second total budget including retries (configurable under **Polish → Timeout**).
+- SSE keep-alive comments reset the idle timer; 20 seconds without any bytes counts as a stall.
+- Transient failures retry up to 5 total attempts with backoff and `Retry-After` support. Non-retryable errors (bad API key, out of credits, unknown model) fail immediately. Translation gets its own 5-attempt budget.
+- Fallback order: if polishing fails, Doubao's raw transcript is inserted; if translation fails, the polished text is inserted. Results are always copied to the clipboard as well.
+- Truncated responses (`finish_reason == "length"`) are never inserted; Murmur falls back to the full prior text instead. When using OpenRouter, `max_tokens` is clamped to the model's advertised output limit.
+- For OpenRouter endpoints, Murmur requests the lowest reasoning effort each model supports to avoid multi-second thinking delays during polishing, and pre-warms the connection while you're still speaking to avoid cold DNS/TLS latency on stop.
 
-**Limits**
+**Session limits**
 
-- A dictation stops at 15 minutes. The timer turns amber in the last minute. What was said goes in as usual.
-- A dictation also stops once Doubao has heard no new words for 2 minutes (Speech → Listening, from 30 seconds to 10 minutes), so a shortcut pressed by accident doesn't keep recognition running and billed. It makes no difference whether nothing was said at all or the user has finished. Only time connected to Doubao counts: while it reconnects nothing is billed, and words already spoken may still be catching up. What was said then goes in as usual. If nothing was, the recording is discarded.
+- **Max duration:** 15 minutes. The capsule timer turns amber in the final minute, then stops and processes the recording normally.
+- **Quiet auto-stop:** Stops automatically after 2 minutes with no new words from Doubao (configurable from 30 seconds to 10 minutes, or Never, under **Speech → Listening**), showing an amber countdown in the final seconds. Only connected time counts toward the limit; reconnect intervals are excluded. If speech was captured, it processes normally; if nothing was heard, the recording is discarded.

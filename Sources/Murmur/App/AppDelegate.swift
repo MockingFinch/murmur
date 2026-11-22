@@ -9,7 +9,7 @@ import SwiftUI
 enum AppHotkey: CaseIterable {
     case dictate, translate
 
-    private var id: Hotkeys.ID { self == .dictate ? .toggle : .translate }
+    var id: Hotkeys.ID { self == .dictate ? .toggle : .translate }
     var intent: DictationEngine.Intent { self == .dictate ? .dictate : .translate }
     var defaultShortcut: Shortcut { self == .dictate ? .default : .translateDefault }
     /// What the other shortcut is for, to explain a clash.
@@ -27,7 +27,11 @@ enum AppHotkey: CaseIterable {
     @discardableResult
     func install(_ shortcut: Shortcut) -> Bool {
         let intent = self.intent
-        return Hotkeys.shared.register(id, shortcut) { DictationEngine.shared.press(intent) }
+        return Hotkeys.shared.register(
+            id, shortcut,
+            onRelease: { DictationEngine.shared.release(intent) },
+            action: { DictationEngine.shared.press(intent) }
+        )
     }
 
     func suspend() { Hotkeys.shared.unregister(id) }
@@ -52,21 +56,24 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
         engine.openSettings = { [weak self] page in self?.showSettings(page) }
         engine.onStateChange = { [weak self] state in self?.reflect(state) }
+        engine.onInventoryChange = { [weak self] in self?.updateStatusIcon() }
 
         let dictates = AppHotkey.dictate.install(settings.shortcut)
         let translates = AppHotkey.translate.install(settings.translateShortcut)
         let ready = settings.speechReady && Permissions.microphone == .authorized && Permissions.accessibility
         if !dictates {
-            showSettings(.shortcut)
+            showSettings(.general)
         } else if !translates {
             showSettings(.translate)
         } else if !ready {
             showSettings(.overview)
         }
         engine.recoverAtLaunch()
+        updateStatusIcon()
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        settings.flushSecrets()
         engine.prepareForQuit()
     }
 
@@ -90,7 +97,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     private func setUpStatusItem() {
         let item = NSStatusBar.system.statusItem(withLength: NSStatusItem.squareLength)
-        item.button?.image = StatusIcon.image(active: false)
+        item.button?.image = StatusIcon.image(.idle, badge: false)
         item.button?.toolTip = "Murmur"
         let menu = NSMenu()
         menu.delegate = self
@@ -98,14 +105,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         statusItem = item
     }
 
+    private func updateStatusIcon() {
+        let appearance: StatusIcon.Appearance
+        switch engine.state {
+        case .listening: appearance = .listening
+        case .arming, .working: appearance = .working
+        case .idle: appearance = .idle
+        }
+        let hasBadge = appearance == .idle && (!engine.recordings.all().isEmpty || engine.lastIssue != nil)
+        statusItem?.button?.image = StatusIcon.image(appearance, badge: hasBadge)
+    }
+
     private func reflect(_ state: DictationEngine.State) {
-        statusItem?.button?.image = StatusIcon.image(active: state == .listening)
+        updateStatusIcon()
 
         // Reserve Escape only while the recording can still be discarded.
         if state == .listening {
             Hotkeys.shared.register(.cancel, Shortcut(keyCode: UInt32(kVK_Escape), modifiers: 0)) { [weak self] in
                 guard let self, self.engine.state == .listening else { return }
-                self.engine.cancel()
+                self.engine.pressEscape()
             }
         } else {
             Hotkeys.shared.unregister(.cancel)
@@ -114,18 +132,36 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
 
     func menuNeedsUpdate(_ menu: NSMenu) {
         menu.removeAllItems()
-        let ready = settings.speechReady && Permissions.microphone != .denied && Permissions.accessibility
+        let hotkeyOK = Hotkeys.shared.isRegistered(.toggle)
+        let micOK = Permissions.microphone == .authorized
+        let ready = settings.speechReady && micOK && Permissions.accessibility && hotkeyOK
 
-        let header = NSMenuItem(title: ready ? "Murmur is ready" : "Murmur needs setting up", action: nil, keyEquivalent: "")
-        header.isEnabled = false
+        let headerTitle: String
+        if !hotkeyOK {
+            headerTitle = "Shortcut unavailable — click to fix"
+        } else if ready {
+            headerTitle = "Murmur is ready"
+        } else {
+            headerTitle = "Murmur needs setting up"
+        }
+        let header = NSMenuItem(title: headerTitle, action: ready ? nil : #selector(openFirstIncomplete), keyEquivalent: "")
+        header.target = ready ? nil : self
+        header.isEnabled = !ready
         header.image = NSImage(systemSymbolName: ready ? "checkmark.circle.fill" : "exclamationmark.circle.fill", accessibilityDescription: nil)?
             .withSymbolConfiguration(.init(paletteColors: [ready ? NSColor(Brand.mint) : NSColor(Brand.amber)]))
         menu.addItem(header)
+
+        if let issue = engine.lastIssue {
+            menu.addItem(makeIssueItem(issue))
+        }
         menu.addItem(.separator())
+
+        let targetLang = TranslatePrompt.language(settings.translateLanguage)
+        let targetShort = TranslationLanguages.native(targetLang)
 
         if engine.state == .listening {
             let translating = engine.intent == .translate
-            let stop = NSMenuItem(title: translating ? "Stop and Translate" : "Stop and Insert",
+            let stop = NSMenuItem(title: translating ? "Stop and Translate (\(targetShort))" : "Stop and Insert",
                                   action: #selector(dictateFromMenu), keyEquivalent: "")
             stop.target = self
             stop.image = NSImage(systemSymbolName: "stop.circle", accessibilityDescription: nil)
@@ -138,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             dictate.toolTip = "Or press \(settings.shortcut.display) anywhere"
             dictate.isEnabled = idle
             menu.addItem(dictate)
-            let translate = NSMenuItem(title: "Dictate and Translate", action: #selector(translateFromMenu), keyEquivalent: "")
+            let translate = NSMenuItem(title: "Dictate and Translate (\(targetShort))", action: #selector(translateFromMenu), keyEquivalent: "")
             translate.target = self
             translate.image = NSImage(systemSymbolName: "translate", accessibilityDescription: nil)
             translate.toolTip = "Or press \(settings.translateShortcut.display) anywhere"
@@ -150,6 +186,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
             cancel.target = self
             menu.addItem(cancel)
         }
+
+        // Quick target-language switcher so users don't have to open Settings to flip languages.
+        menu.addItem(makeLanguageMenuItem(current: targetLang))
 
         let shortcuts = NSMenuItem(title: "\(settings.shortcut.display) dictate · \(settings.translateShortcut.display) translate",
                                    action: nil, keyEquivalent: "")
@@ -174,6 +213,101 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         menu.addItem(NSMenuItem(title: "Quit Murmur", action: #selector(NSApplication.terminate(_:)), keyEquivalent: "q"))
     }
 
+    private func makeIssueItem(_ issue: DictationEngine.LastIssue) -> NSMenuItem {
+        let item = NSMenuItem(title: "Last issue: \(issue.title)", action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: "exclamationmark.triangle.fill", accessibilityDescription: nil)?
+            .withSymbolConfiguration(.init(paletteColors: [NSColor(Brand.amber)]))
+        item.toolTip = issue.detail ?? issue.title
+
+        let sub = NSMenu()
+        if let detail = issue.detail, !detail.isEmpty {
+            let info = NSMenuItem(title: Self.snippet(detail, limit: 84), action: nil, keyEquivalent: "")
+            info.isEnabled = false
+            info.toolTip = detail
+            sub.addItem(info)
+            sub.addItem(.separator())
+        }
+        if let page = issue.page {
+            let open = NSMenuItem(title: "Open \(page.title) Settings…", action: #selector(openIssueSettings(_:)), keyEquivalent: "")
+            open.target = self
+            open.representedObject = page.rawValue
+            sub.addItem(open)
+        }
+        let copy = NSMenuItem(title: "Copy Error Details", action: #selector(copyIssueDetail), keyEquivalent: "")
+        copy.target = self
+        sub.addItem(copy)
+        let dismiss = NSMenuItem(title: "Dismiss", action: #selector(dismissIssue), keyEquivalent: "")
+        dismiss.target = self
+        sub.addItem(dismiss)
+        item.submenu = sub
+        return item
+    }
+
+    private func makeLanguageMenuItem(current: String) -> NSMenuItem {
+        let item = NSMenuItem(title: "Translate Into: \(TranslationLanguages.native(current))", action: nil, keyEquivalent: "")
+        item.image = NSImage(systemSymbolName: "globe", accessibilityDescription: nil)
+        let sub = NSMenu()
+        let listed = TranslationLanguages.entry(current)
+        if listed == nil {
+            let custom = NSMenuItem(title: current, action: #selector(pickLanguage(_:)), keyEquivalent: "")
+            custom.target = self
+            custom.representedObject = current
+            custom.state = .on
+            sub.addItem(custom)
+            sub.addItem(.separator())
+        }
+        for lang in TranslationLanguages.all {
+            let label = lang.native == lang.name ? lang.name : "\(lang.name) — \(lang.native)"
+            let entry = NSMenuItem(title: label, action: #selector(pickLanguage(_:)), keyEquivalent: "")
+            entry.target = self
+            entry.representedObject = lang.name
+            entry.state = listed?.name == lang.name ? .on : .off
+            sub.addItem(entry)
+        }
+        sub.addItem(.separator())
+        let other = NSMenuItem(title: "Custom Language…", action: #selector(openTranslate), keyEquivalent: "")
+        other.target = self
+        sub.addItem(other)
+        item.submenu = sub
+        return item
+    }
+
+    @objc private func openFirstIncomplete() {
+        if !settings.speechReady {
+            showSettings(.speech)
+        } else if Permissions.microphone != .authorized || !Permissions.accessibility || !Hotkeys.shared.isRegistered(.toggle) {
+            showSettings(.general)
+        } else if !Hotkeys.shared.isRegistered(.translate) {
+            showSettings(.translate)
+        } else {
+            showSettings(.overview)
+        }
+    }
+
+    @objc private func openIssueSettings(_ sender: NSMenuItem) {
+        if let raw = sender.representedObject as? String, let page = Page(rawValue: raw) {
+            showSettings(page)
+        }
+    }
+
+    @objc private func copyIssueDetail() {
+        guard let issue = engine.lastIssue else { return }
+        let text = issue.detail.map { "\(issue.title): \($0)" } ?? issue.title
+        Clipboard.put(text)
+        engine.hud.finish(.done("Error details copied"))
+    }
+
+    @objc private func dismissIssue() {
+        engine.clearLastIssue()
+    }
+
+    @objc private func pickLanguage(_ sender: NSMenuItem) {
+        guard let name = sender.representedObject as? String else { return }
+        settings.translateLanguage = name
+    }
+
+    @objc private func openTranslate() { showSettings(.translate) }
+
     @objc private func dictateFromMenu() { pressFromMenu(.dictate) }
 
     @objc private func translateFromMenu() { pressFromMenu(.translate) }
@@ -196,7 +330,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                                     action: nil, keyEquivalent: "")
             header.isEnabled = false
             menu.addItem(header)
-            for r in saved.prefix(5) {
+            if saved.count == 1, let r = saved.first {
                 let item = NSMenuItem(title: "Transcribe Again · \(Self.describe(r))", action: #selector(transcribeAgain(_:)),
                                       keyEquivalent: "")
                 item.target = self
@@ -204,30 +338,59 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
                 item.image = NSImage(systemSymbolName: r.translate ? "translate" : "arrow.clockwise", accessibilityDescription: nil)
                 item.toolTip = "Transcribes it again\(r.translate ? ", translates it" : "") and inserts the text where you're typing"
                 menu.addItem(item)
+                let delete = NSMenuItem(title: "Delete Saved Recording…", action: #selector(deleteRecordings), keyEquivalent: "")
+                delete.target = self
+                menu.addItem(delete)
+            } else {
+                for r in saved.prefix(5) {
+                    let row = NSMenuItem(title: Self.describe(r), action: nil, keyEquivalent: "")
+                    row.image = NSImage(systemSymbolName: r.translate ? "translate" : "waveform", accessibilityDescription: nil)
+                    let sub = NSMenu()
+                    let retry = NSMenuItem(title: "Transcribe Again", action: #selector(transcribeAgain(_:)), keyEquivalent: "")
+                    retry.target = self
+                    retry.representedObject = r.id
+                    retry.image = NSImage(systemSymbolName: "arrow.clockwise", accessibilityDescription: nil)
+                    sub.addItem(retry)
+                    let del = NSMenuItem(title: "Delete Recording…", action: #selector(deleteOneRecording(_:)), keyEquivalent: "")
+                    del.target = self
+                    del.representedObject = r.id
+                    del.image = NSImage(systemSymbolName: "trash", accessibilityDescription: nil)
+                    sub.addItem(del)
+                    row.submenu = sub
+                    menu.addItem(row)
+                }
+                let deleteAll = NSMenuItem(title: "Delete All Saved Recordings…", action: #selector(deleteRecordings), keyEquivalent: "")
+                deleteAll.target = self
+                menu.addItem(deleteAll)
             }
-            let delete = NSMenuItem(title: saved.count == 1 ? "Delete Saved Recording…" : "Delete Saved Recordings…",
-                                    action: #selector(deleteRecordings), keyEquivalent: "")
-            delete.target = self
-            menu.addItem(delete)
             menu.addItem(.separator())
         }
         if engine.lastResult != nil || engine.lastHeard != nil {
-            if engine.lastResult != nil {
-                let copy = NSMenuItem(title: "Copy Last Result", action: #selector(copyLastResult), keyEquivalent: "")
+            if let result = engine.lastResult {
+                let copy = NSMenuItem(title: "Copy Last Result · \(Self.snippet(result, limit: 28))",
+                                      action: #selector(copyLastResult), keyEquivalent: "")
                 copy.target = self
                 copy.image = NSImage(systemSymbolName: "doc.on.clipboard", accessibilityDescription: nil)
-                copy.toolTip = "The text Murmur last inserted"
+                copy.toolTip = Self.snippet(result, limit: 220)
                 menu.addItem(copy)
             }
             if let heard = engine.lastHeard, heard != engine.lastResult {
-                let copy = NSMenuItem(title: "Copy Last Transcript, as Heard", action: #selector(copyLastHeard), keyEquivalent: "")
+                let copy = NSMenuItem(title: "Copy Last Transcript · \(Self.snippet(heard, limit: 24))",
+                                      action: #selector(copyLastHeard), keyEquivalent: "")
                 copy.target = self
                 copy.image = NSImage(systemSymbolName: "text.quote", accessibilityDescription: nil)
-                copy.toolTip = "What Doubao heard in the last dictation, before polishing or translating"
+                copy.toolTip = "As Doubao heard it: \(Self.snippet(heard, limit: 220))"
                 menu.addItem(copy)
             }
             menu.addItem(.separator())
         }
+    }
+
+    private static func snippet(_ text: String, limit: Int) -> String {
+        let flat = text.replacingOccurrences(of: #"\s+"#, with: " ", options: .regularExpression)
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        guard flat.count > limit else { return flat }
+        return String(flat.prefix(max(1, limit - 1))) + "…"
     }
 
     private static func describe(_ r: RecordingStore.Recording) -> String {
@@ -239,6 +402,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
               let recording = engine.recordings.all().first(where: { $0.id == id }) else { return }
         // Let the menu close and the previous app regain focus first.
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { DictationEngine.shared.transcribeAgain(recording) }
+    }
+
+    @objc private func deleteOneRecording(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String,
+              let rec = engine.recordings.all().first(where: { $0.id == id }) else { return }
+        NSApp.activate()
+        let alert = NSAlert()
+        alert.messageText = "Delete this saved recording?"
+        alert.informativeText = "\(Self.describe(rec)) will be permanently removed."
+        alert.addButton(withTitle: "Delete")
+        alert.addButton(withTitle: "Cancel")
+        alert.buttons.first?.hasDestructiveAction = true
+        guard alert.runModal() == .alertFirstButtonReturn, engine.state == .idle else { return }
+        engine.recordings.delete(id)
+        updateStatusIcon()
     }
 
     @objc private func deleteRecordings() {
@@ -253,6 +431,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         alert.buttons.first?.hasDestructiveAction = true
         guard alert.runModal() == .alertFirstButtonReturn, engine.state == .idle else { return }
         saved.forEach { engine.recordings.delete($0.id) }
+        updateStatusIcon()
     }
 
     @objc private func copyLastResult() {
@@ -359,13 +538,21 @@ enum MainMenu {
 
 // MARK: - Menu bar icon
 
-/// The mark as a menu bar template: bars that turn coral while listening.
+/// The mark as a menu bar template: coral while listening, violet while
+/// transcribing/polishing, with a small amber dot when recordings or an issue wait.
 @MainActor
 enum StatusIcon {
-    private static var cache: [Bool: NSImage] = [:]
+    enum Appearance: Hashable { case idle, listening, working }
+    private struct Key: Hashable { let appearance: Appearance; let badge: Bool }
+    private static var cache: [Key: NSImage] = [:]
 
     static func image(active: Bool) -> NSImage {
-        if let cached = cache[active] { return cached }
+        image(active ? .listening : .idle, badge: false)
+    }
+
+    static func image(_ appearance: Appearance, badge: Bool = false) -> NSImage {
+        let key = Key(appearance: appearance, badge: badge)
+        if let cached = cache[key] { return cached }
         let size = NSSize(width: 18, height: 18)
         let image = NSImage(size: size, flipped: false) { rect in
             let heights: [CGFloat] = [0.36, 0.72, 1.0, 0.58, 0.32, 0.32]
@@ -374,15 +561,32 @@ enum StatusIcon {
             for (i, h) in heights.enumerated() {
                 let height = max(w, h * 13)
                 let bar = NSRect(x: 1 + CGFloat(i) * (w + gap), y: (rect.height - height) / 2, width: w, height: height)
-                let color: NSColor = active ? (i < 4 ? NSColor(Brand.coral) : .labelColor) : .black
+                let color: NSColor
+                switch appearance {
+                case .idle:
+                    color = badge ? .labelColor : .black
+                case .listening:
+                    color = i < 4 ? NSColor(Brand.coral) : .labelColor
+                case .working:
+                    color = i < 4 ? NSColor(Brand.violet) : .labelColor
+                }
                 color.setFill()
                 NSBezierPath(roundedRect: bar, xRadius: w / 2, yRadius: w / 2).fill()
             }
+            if badge {
+                let dot = NSRect(x: rect.width - 5, y: rect.height - 5.5, width: 4.5, height: 4.5)
+                NSColor(Brand.amber).setFill()
+                NSBezierPath(ovalIn: dot).fill()
+            }
             return true
         }
-        image.isTemplate = !active
-        image.accessibilityDescription = active ? "Murmur — listening" : "Murmur"
-        cache[active] = image
+        image.isTemplate = (appearance == .idle && !badge)
+        switch appearance {
+        case .listening: image.accessibilityDescription = "Murmur — listening"
+        case .working: image.accessibilityDescription = "Murmur — working"
+        case .idle: image.accessibilityDescription = badge ? "Murmur — attention needed" : "Murmur"
+        }
+        cache[key] = image
         return image
     }
 }

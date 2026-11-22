@@ -364,9 +364,9 @@ public final class OpenRouterClient: Sendable {
     /// Polishes `input` with `instructions`: streams the answer, watches the
     /// stream for stalls, and tries again on failures that may pass.
     public func polish(model: String, info: OpenRouterModel?, instructions: String, input: String,
-                       source: PolishPrompt.Source,
+                       source: PolishPrompt.Source, vocabulary: [String] = [],
                        progress: @escaping @Sendable (PolishProgress) -> Void) async throws -> PolishOutput {
-        let (system, user) = PolishPrompt.messages(instructions: instructions, input: input, source: source)
+        let (system, user) = PolishPrompt.messages(instructions: instructions, input: input, source: source, vocabulary: vocabulary)
         return try await answer(model: model, info: info, system: system, user: user, input: input, progress: progress)
     }
 

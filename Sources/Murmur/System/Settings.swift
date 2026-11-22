@@ -47,6 +47,13 @@ enum DoubaoAuth: String, CaseIterable, Identifiable {
     var id: String { rawValue }
 }
 
+/// Where on the active screen the floating capsule appears.
+enum HUDPosition: String, CaseIterable, Identifiable {
+    case bottom, top
+    var id: String { rawValue }
+    var title: String { self == .bottom ? "Bottom" : "Top" }
+}
+
 /// Everything the user sets up: plain values in UserDefaults, keys in `SecretStore`.
 @MainActor @Observable
 final class AppSettings {
@@ -54,6 +61,7 @@ final class AppSettings {
 
     @ObservationIgnored private let defaults = UserDefaults.standard
     @ObservationIgnored private var secretWrites: [String: Task<Void, Never>] = [:]
+    @ObservationIgnored private var pendingSecrets: [String: String] = [:]
 
     var shortcut: Shortcut { didSet { store(shortcut, "shortcut") } }
     var translateShortcut: Shortcut { didSet { store(translateShortcut, "translate.shortcut") } }
@@ -72,10 +80,18 @@ final class AppSettings {
     /// Seconds to wait for the model, retries included, before inserting the transcript as it is.
     var polishTimeout: Double { didSet { defaults.set(polishTimeout, forKey: "polish.timeout") } }
     var sounds: Bool { didSet { defaults.set(sounds, forKey: "sounds") } }
-    /// Seconds without new words from Doubao after which listening stops by itself.
+    /// Seconds without new words from Doubao after which listening stops by itself (0 = never).
     var quietStop: Double { didSet { defaults.set(quietStop, forKey: "listen.quietStop") } }
+    /// Where the floating capsule sits on the active screen.
+    var hudPosition: HUDPosition { didSet { defaults.set(hudPosition.rawValue, forKey: "hud.position") } }
+    /// Whether to restore the previous clipboard after a successful paste.
+    var restoreClipboard: Bool { didSet { defaults.set(restoreClipboard, forKey: "paste.restoreClipboard") } }
+    /// Preferred CoreAudio input device UID; empty uses macOS's default input.
+    var preferredMicUID: String { didSet { defaults.set(preferredMicUID, forKey: "audio.micUID") } }
+    /// Custom names, jargon, and phrases (one per line or comma-separated).
+    var vocabulary: String { didSet { defaults.set(vocabulary, forKey: "speech.vocabulary") } }
 
-    static let defaultModel = "google/gemini-3.1-flash-lite"
+    nonisolated static let defaultModel = "google/gemini-3.1-flash-lite"
 
     private init() {
         shortcut = (defaults.data(forKey: "shortcut")).flatMap { try? JSONDecoder().decode(Shortcut.self, from: $0) } ?? .default
@@ -96,15 +112,22 @@ final class AppSettings {
         polishTimeout = defaults.object(forKey: "polish.timeout") as? Double ?? OpenRouterClient.defaultTimeout
         sounds = defaults.object(forKey: "sounds") as? Bool ?? true
         quietStop = defaults.object(forKey: "listen.quietStop") as? Double ?? SilenceWatch.defaultLimit
+        hudPosition = HUDPosition(rawValue: defaults.string(forKey: "hud.position") ?? "") ?? .bottom
+        restoreClipboard = defaults.object(forKey: "paste.restoreClipboard") as? Bool ?? false
+        preferredMicUID = defaults.string(forKey: "audio.micUID") ?? ""
+        vocabulary = defaults.string(forKey: "speech.vocabulary") ?? ""
         doubaoKey = SecretStore.read("doubao")
         openRouterKey = SecretStore.read("llm")
     }
+
+    /// Parsed unique vocabulary terms for Doubao hotwords and the polish prompt.
+    var vocabularyTerms: [String] { PolishPrompt.parseVocabulary(vocabulary) }
 
     /// The Doubao credentials, when they are complete.
     var doubaoCredentials: DoubaoCredentials? {
         let appID = doubaoAuth == .classic ? doubaoAppID : ""
         if doubaoAuth == .classic, appID.trimmingCharacters(in: .whitespaces).isEmpty { return nil }
-        let c = DoubaoCredentials(appID: appID, token: doubaoKey, resource: doubaoResource)
+        let c = DoubaoCredentials(appID: appID, token: doubaoKey, resource: doubaoResource, hotwords: vocabularyTerms)
         return c.isComplete ? c : nil
     }
 
@@ -140,6 +163,17 @@ final class AppSettings {
         llmUsesOpenRouter ? ModelCatalog.shared.info(for: openRouterModel.trimmingCharacters(in: .whitespacesAndNewlines)) : nil
     }
 
+    /// Flushes any debounced secret writes immediately (e.g. before quitting).
+    func flushSecrets() {
+        for (account, task) in secretWrites {
+            task.cancel()
+            if let value = pendingSecrets.removeValue(forKey: account) {
+                SecretStore.write(value, account)
+            }
+        }
+        secretWrites.removeAll()
+    }
+
     private func store<T: Encodable>(_ value: T, _ key: String) {
         if let data = try? JSONEncoder().encode(value) { defaults.set(data, forKey: key) }
     }
@@ -148,9 +182,11 @@ final class AppSettings {
     private func saveSecret(_ value: String, _ account: String) {
         secretWrites[account]?.cancel()
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
+        pendingSecrets[account] = trimmed
         secretWrites[account] = Task {
             try? await Task.sleep(nanoseconds: 500_000_000)
             guard !Task.isCancelled else { return }
+            pendingSecrets.removeValue(forKey: account)
             SecretStore.write(trimmed, account)
         }
     }

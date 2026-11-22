@@ -43,6 +43,15 @@ enum Snapshots {
                 m.startListening(); m.level = 0.4
                 m.startedAt = Date().addingTimeInterval(-(DictationEngine.maxRecording - 42))
             }),
+            ("listening-escape-confirm", { m in
+                m.startListening(); m.level = 0.45; m.escapeConfirm = true
+                m.liveText = "So the plan for next week is to ship the first draft on Wednesday."
+            }),
+            ("listening-quiet-countdown", { m in
+                m.startListening(); m.level = 0.1; m.quietCountdown = 12
+                m.liveText = "Let's review this on Thursday."
+            }),
+            ("arming", { m in m.show(.arming) }),
             ("transcribing", { m in m.show(.transcribing(retry: 0)) }),
             ("reconnecting", { m in m.show(.transcribing(retry: 3)) }),
             ("polishing", { m in m.preview = "嗯那个我觉得这个方案呢其实还可以"; m.show(.model(.polish, retry: 0, thinking: false)) }),
@@ -131,7 +140,7 @@ enum Snapshots {
         // set it the same way and check the right side follows.
         var ok = true
         var previous = detailPixels()
-        for page in [Page.speech, .polish, .shortcut, .overview] {
+        for page in [Page.speech, .polish, .translate, .general, .overview] {
             navigator.page = page
             let now = detailPixels()
             let changed = now != previous

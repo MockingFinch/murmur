@@ -1,17 +1,55 @@
 import MurmurCore
 import SwiftUI
 
+private struct ProviderPreset: Identifiable {
+    let name: String
+    let base: String
+    let suggestedModel: String
+    var id: String { name }
+
+    static let all: [ProviderPreset] = [
+        .init(name: "OpenRouter", base: "https://openrouter.ai/api/v1", suggestedModel: AppSettings.defaultModel),
+        .init(name: "OpenAI", base: "https://api.openai.com/v1", suggestedModel: "gpt-4.1-mini"),
+        .init(name: "DeepSeek", base: "https://api.deepseek.com/v1", suggestedModel: "deepseek-chat"),
+        .init(name: "Ollama", base: "http://localhost:11434/v1", suggestedModel: "qwen3:8b"),
+        .init(name: "LM Studio", base: "http://localhost:1234/v1", suggestedModel: "local-model"),
+    ]
+}
+
 struct PolishPage: View {
     @Bindable private var settings = AppSettings.shared
     @State private var check: CheckState = .idle
+    @State private var showCatalog = false
 
     var body: some View {
         PageHeader(symbol: "sparkles", gradient: Brand.polish, title: "Polish",
                    subtitle: "A language model tidies what you said, or rewrites what you selected, following your prompt.")
 
-        PageSection(title: "Model API") {
+        PageSection(title: "Model API", trailing: settings.llmUsesOpenRouter
+                    ? AnyView(LinkLabel(title: "OpenRouter keys", url: "https://openrouter.ai/keys"))
+                    : nil) {
             Card {
                 VStack(alignment: .leading, spacing: 10) {
+                    HStack(spacing: 6) {
+                        ForEach(ProviderPreset.all) { preset in
+                            let active = settings.llmEndpoint?.absoluteString.lowercased() == preset.base.lowercased()
+                            Button(preset.name) { apply(preset) }
+                                .buttonStyle(.plain)
+                                .font(.system(size: 11.5, weight: active ? .semibold : .medium))
+                                .foregroundStyle(active ? Color.white : Color.secondary)
+                                .padding(.horizontal, 9)
+                                .padding(.vertical, 4)
+                                .background(
+                                    Capsule().fill(active ? AnyShapeStyle(Brand.polish) : AnyShapeStyle(Color.well))
+                                )
+                                .overlay(
+                                    Capsule().strokeBorder(active ? Color.clear : Color.hairline, lineWidth: 0.5)
+                                )
+                        }
+                        Spacer(minLength: 0)
+                    }
+                    .padding(.bottom, 2)
+
                     FieldLabel("Endpoint")
                     PlainField(placeholder: OpenRouterClient.defaultBase.absoluteString, text: $settings.openRouterBase, monospaced: true)
                     Hint(text: endpointHint, warning: endpointInvalid)
@@ -22,14 +60,25 @@ struct PolishPage: View {
                     Hint(text: "Saved on this Mac, readable only by your account. Leave it empty to insert the transcript as it is.")
 
                     FieldLabel("Model").padding(.top, 6)
-                    PlainField(placeholder: AppSettings.defaultModel, text: $settings.openRouterModel, monospaced: true)
+                    HStack(spacing: 8) {
+                        PlainField(placeholder: AppSettings.defaultModel, text: $settings.openRouterModel, monospaced: true)
+                        if settings.llmUsesOpenRouter, !ModelCatalog.shared.models.isEmpty {
+                            Button("Browse…") { showCatalog = true }
+                                .buttonStyle(.glass)
+                                .popover(isPresented: $showCatalog, arrowEdge: .trailing) {
+                                    ModelPickerPopover(selected: $settings.openRouterModel) {
+                                        showCatalog = false
+                                    }
+                                }
+                        }
+                    }
                     Hint(text: modelHint.text, warning: modelHint.warning)
 
                     CheckButton(title: "Test", state: check, disabled: !settings.polishReady) { test() }
                         .padding(.top, 6)
                 }
             }
-            Text("Any OpenAI-compatible API works: OpenRouter, OpenAI, DeepSeek, a model on this Mac. With OpenRouter, Murmur also asks the model for as little thinking as it allows, since thinking only slows a polish down.")
+            Text("Any OpenAI-compatible API works: OpenRouter, OpenAI, DeepSeek, or a model running on this Mac. With OpenRouter, Murmur asks the model for as little thinking as it allows, since thinking only slows a polish down.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -69,7 +118,7 @@ struct PolishPage: View {
                     .padding(.vertical, 12)
                     .frame(minHeight: 260, maxHeight: 360)
             }
-            Text("Used for both dictation and selections. Murmur tells the model which one it's getting, and to answer with the text alone.")
+            Text("Used for both dictation and selections. Murmur tells the model which one it's getting, includes any custom vocabulary from Speech, and asks for the text alone.")
                 .font(.system(size: 11.5))
                 .foregroundStyle(.secondary)
                 .fixedSize(horizontal: false, vertical: true)
@@ -81,7 +130,16 @@ struct PolishPage: View {
         }
     }
 
-    // MARK: Hints
+    // MARK: Presets & hints
+
+    private func apply(_ preset: ProviderPreset) {
+        let currentModel = settings.openRouterModel.trimmingCharacters(in: .whitespacesAndNewlines)
+        let isPresetModel = ProviderPreset.all.contains { $0.suggestedModel == currentModel }
+        settings.openRouterBase = preset.base
+        if currentModel.isEmpty || isPresetModel {
+            settings.openRouterModel = preset.suggestedModel
+        }
+    }
 
     private var endpointInvalid: Bool {
         !settings.openRouterBase.trimmingCharacters(in: .whitespaces).isEmpty && settings.llmEndpoint == nil
@@ -101,7 +159,7 @@ struct PolishPage: View {
             return ("The model's name exactly as the API expects it.", false)
         }
         if let info = settings.modelInfo { return ("\(info.name) · \(Price.text(info))", false) }
-        return ("OpenRouter doesn't list “\(id)”. Check the spelling.", true)
+        return ("OpenRouter doesn't list “\(id)”. Check the spelling or click Browse.", true)
     }
 
     private var timeoutChoices: [Double] {
@@ -131,6 +189,94 @@ struct PolishPage: View {
                 check = .failed((error as? LocalizedError)?.errorDescription ?? error.localizedDescription)
             }
         }
+    }
+}
+
+// MARK: - OpenRouter model picker
+
+private struct ModelPickerPopover: View {
+    @Binding var selected: String
+    let close: () -> Void
+    @State private var query = ""
+    private let catalog = ModelCatalog.shared
+
+    /// Fast, low-latency models well suited to dictation polishing.
+    private static let recommendedIDs: [String] = [
+        "google/gemini-3.1-flash-lite",
+        "google/gemini-2.5-flash-lite",
+        "google/gemini-2.5-flash",
+        "openai/gpt-4.1-nano",
+        "openai/gpt-4.1-mini",
+        "anthropic/claude-haiku-4.5",
+        "deepseek/deepseek-chat-v3-0324",
+    ]
+
+    private var filtered: [OpenRouterModel] {
+        let q = query.trimmingCharacters(in: .whitespacesAndNewlines).lowercased()
+        if q.isEmpty {
+            let rec = Self.recommendedIDs.compactMap { id in catalog.models.first { $0.id == id } }
+            let rest = catalog.models.filter { m in !Self.recommendedIDs.contains(m.id) }
+                .sorted { $0.created > $1.created }
+                .prefix(40)
+            return rec + rest
+        }
+        return catalog.models.filter {
+            $0.id.lowercased().contains(q) || $0.name.lowercased().contains(q)
+        }
+        .prefix(60)
+        .map { $0 }
+    }
+
+    var body: some View {
+        VStack(spacing: 10) {
+            PlainField(placeholder: "Search OpenRouter models…", text: $query)
+            ScrollView {
+                LazyVStack(alignment: .leading, spacing: 2) {
+                    if query.trimmingCharacters(in: .whitespaces).isEmpty {
+                        Text("Suggested for dictation")
+                            .font(.system(size: 11, weight: .semibold))
+                            .foregroundStyle(.secondary)
+                            .padding(.horizontal, 8)
+                            .padding(.top, 2)
+                    }
+                    ForEach(filtered) { model in
+                        let active = selected.trimmingCharacters(in: .whitespacesAndNewlines) == model.id
+                        Button {
+                            selected = model.id
+                            close()
+                        } label: {
+                            HStack(spacing: 8) {
+                                VStack(alignment: .leading, spacing: 2) {
+                                    Text(model.name)
+                                        .font(.system(size: 12.5, weight: .medium))
+                                        .foregroundStyle(.primary)
+                                        .lineLimit(1)
+                                    Text("\(model.id) · \(Price.text(model))")
+                                        .font(.system(size: 11, design: .monospaced))
+                                        .foregroundStyle(.secondary)
+                                        .lineLimit(1)
+                                }
+                                Spacer(minLength: 4)
+                                if active {
+                                    Image(systemName: "checkmark")
+                                        .font(.system(size: 11, weight: .semibold))
+                                        .foregroundStyle(Color.accentColor)
+                                }
+                            }
+                            .padding(.horizontal, 8)
+                            .padding(.vertical, 6)
+                            .background(RoundedRectangle(cornerRadius: 7, style: .continuous)
+                                .fill(active ? Color.accentColor.opacity(0.12) : .clear))
+                            .contentShape(Rectangle())
+                        }
+                        .buttonStyle(.plain)
+                    }
+                }
+            }
+            .frame(height: 300)
+        }
+        .padding(12)
+        .frame(width: 390)
     }
 }
 
@@ -171,25 +317,79 @@ struct TryIt: View {
     let job: Job
     private let settings = AppSettings.shared
     @State private var input: String
+    @State private var source: PolishPrompt.Source = .dictation
+    @State private var userEdited = false
     @State private var output = ""
     @State private var status: String?
     @State private var failed = false
     @State private var running: Task<Void, Never>?
     @State private var started = Date()
 
+    private static let polishSamples: [(title: String, source: PolishPrompt.Source, text: String)] = [
+        ("Mixed CN/EN", .dictation, "嗯，那个，我觉得这个方案呢其实还可以，就是那个 API 的 response time 有点慢，呃，我们下周三之前能不能先出一个初版"),
+        ("English", .dictation, "Um, so for next week, uh, let's meet on Tuesday, no sorry Wednesday at three to review the onboarding draft."),
+        ("Selection", .selection, "so basically signups went down mostly because the new form is way too long and people just give up halfway"),
+    ]
+    private static let chineseTranslateSample = "我觉得这个方案其实还可以，就是时间上可能有点紧。我们下周三之前能不能先出一个初版？"
+    private static let englishTranslateSample = "I think this plan looks solid overall, though the timeline is a bit tight. Could we get a first draft out by next Wednesday?"
+
     init(job: Job) {
         self.job = job
-        _input = State(initialValue: job == .polish
-            ? "嗯，那个，我觉得这个方案呢其实还可以，就是那个时间上可能有点紧，呃，我们下周三之前能不能先出一个初版"
-            : "我觉得这个方案其实还可以，就是时间上可能有点紧。我们下周三之前能不能先出一个初版？")
+        let initial: String
+        if job == .polish {
+            initial = Self.polishSamples[0].text
+        } else {
+            let lang = TranslatePrompt.language(AppSettings.shared.translateLanguage).lowercased()
+            initial = (lang.contains("chinese") || lang.contains("cantonese"))
+                ? Self.englishTranslateSample : Self.chineseTranslateSample
+        }
+        _input = State(initialValue: initial)
     }
 
     private var verb: String { job == .polish ? "Polish" : "Translate" }
+    private var targetLanguage: String { TranslatePrompt.language(settings.translateLanguage) }
 
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
-            FieldLabel(job == .polish ? "As spoken" : "Text")
-            TextEditor(text: $input)
+            HStack(spacing: 8) {
+                FieldLabel(job == .polish ? (source == .dictation ? "As spoken" : "Selected text") : "Text")
+                Spacer()
+                if job == .polish {
+                    Picker("", selection: $source) {
+                        Text("Dictation").tag(PolishPrompt.Source.dictation)
+                        Text("Selection").tag(PolishPrompt.Source.selection)
+                    }
+                    .pickerStyle(.segmented)
+                    .labelsHidden()
+                    .controlSize(.small)
+                    .frame(width: 156)
+                }
+            }
+
+            if job == .polish {
+                HStack(spacing: 6) {
+                    ForEach(Self.polishSamples, id: \.title) { sample in
+                        Button(sample.title) {
+                            source = sample.source
+                            input = sample.text
+                            userEdited = false
+                        }
+                        .buttonStyle(.plain)
+                        .font(.system(size: 11, weight: .medium))
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 8)
+                        .padding(.vertical, 3)
+                        .background(Capsule().fill(Color.well))
+                        .overlay(Capsule().strokeBorder(Color.hairline, lineWidth: 0.5))
+                    }
+                    Spacer()
+                }
+            }
+
+            TextEditor(text: Binding(
+                get: { input },
+                set: { input = $0; userEdited = true }
+            ))
                 .font(.system(size: 12.5))
                 .scrollContentBackground(.hidden)
                 .padding(8)
@@ -203,6 +403,7 @@ struct TryIt: View {
                 } label: {
                     Label(running == nil ? verb : "Stop",
                           systemImage: running == nil ? (job == .polish ? "sparkles" : "translate") : "stop.fill")
+                        .labelStyle(.titleAndIcon)
                         .frame(minWidth: 80)
                         .contentTransition(.symbolEffect(.replace))
                 }
@@ -225,7 +426,7 @@ struct TryIt: View {
 
             if !output.isEmpty {
                 VStack(alignment: .leading, spacing: 6) {
-                    FieldLabel(job == .polish ? "Polished" : "Translated")
+                    FieldLabel(job == .polish ? "Polished" : "Translated to \(targetLanguage)")
                     Text(output)
                         .font(.system(size: 13))
                         .textSelection(.enabled)
@@ -238,6 +439,12 @@ struct TryIt: View {
             }
         }
         .animation(Motion.smooth, value: output.isEmpty)
+        .onChange(of: settings.translateLanguage) {
+            guard job == .translate, !userEdited else { return }
+            let lang = targetLanguage.lowercased()
+            input = (lang.contains("chinese") || lang.contains("cantonese"))
+                ? Self.englishTranslateSample : Self.chineseTranslateSample
+        }
     }
 
     private func run() {
@@ -250,6 +457,8 @@ struct TryIt: View {
         let info = settings.modelInfo
         let text = input
         let job = self.job
+        let source = self.source
+        let vocabulary = settings.vocabularyTerms
         let instructions = job == .polish ? settings.prompt : settings.translatePrompt
         let language = settings.translateLanguage
         running = Task {
@@ -257,7 +466,7 @@ struct TryIt: View {
                 let report: @Sendable (PolishProgress) -> Void = { p in Task { @MainActor in show(p) } }
                 let out = job == .polish
                     ? try await client.polish(model: model, info: info, instructions: instructions, input: text,
-                                              source: .dictation, progress: report)
+                                              source: source, vocabulary: vocabulary, progress: report)
                     : try await client.translate(model: model, info: info, instructions: instructions, input: text,
                                                  language: language, progress: report)
                 output = out.text
