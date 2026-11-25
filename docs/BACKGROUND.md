@@ -32,7 +32,7 @@ Existing dictation apps missed one or more of these (especially mixed Chinese/En
 
 Press a global shortcut and start talking. Murmur streams audio to Doubao and displays live text in a small floating bar at the bottom of your screen. Press the shortcut again to finish: Murmur waits for Doubao's more accurate second pass, sends the transcript to your chosen LLM with your polish prompt, pastes the result at your cursor, and leaves a copy on the clipboard.
 
-A second shortcut runs the same flow plus a translation step into your chosen target language. If you already have text selected when you press either shortcut, Murmur skips the microphone and rewrites or translates the selection in place.
+A second shortcut runs the same flow plus a translation step into your chosen target language. Started in the wrong mode halfway through a long thought? Pressing the other shortcut while speaking (or while polishing) switches cleanly between Polish and Translate without stopping the microphone or losing a word. If you already have text selected when you press either shortcut, Murmur skips the microphone and rewrites or translates the selection in place.
 
 ## Key design choices
 
@@ -77,3 +77,5 @@ A second shortcut runs the same flow plus a translation step into your chosen ta
 - **1.3 (Quiet auto-stop):** Automatic stop after 2 minutes without new words from Doubao (configurable, ignoring reconnect time) so an accidental shortcut never runs up a bill, plus stripping stray `~~` strikethrough wrappers from final output.
 - **1.4 (Escape to cancel and anchored capsule motion):** Pressing `Esc` while recording cancels and discards the session immediately, and capsule resize transitions stay anchored around a fixed bottom-center point across all states.
 - **1.5 (Daily ergonomics and safer interactions):** Double-`Esc` protection for long recordings, focused-display and top/bottom capsule placement, hybrid tap-to-toggle / hold-to-talk shortcuts, microphone selection with live testing, personal vocabulary hints for Doubao and polishing, menu bar language switching, truthful working/badge icon states and last-issue details, optional clipboard restoration, OpenRouter model browser and provider presets, and General settings reorganization.
+- **1.6 (Chained pipeline visuals and gentle audio):** Connected `Speech → Polish → Translate` sidebar rail, interactive pipeline map on Overview, stage breadcrumbs, full-chain Polish-to-Translate playground in Try it, live capsule stepper with completion metrics and milestone tracking, and warm felt-damped midrange audio cues.
+- **1.7 (Mid-session mode switching):** Press the other shortcut while speaking (or while transcribing/polishing) to switch seamlessly between Polish and Translate without interrupting the recording or losing words, with live capsule and audio confirmation plus updated recovery metadata.

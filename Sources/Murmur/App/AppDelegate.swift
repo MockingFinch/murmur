@@ -162,10 +162,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
         if engine.state == .listening {
             let translating = engine.intent == .translate
             let stop = NSMenuItem(title: translating ? "Stop and Translate (\(targetShort))" : "Stop and Insert",
-                                  action: #selector(dictateFromMenu), keyEquivalent: "")
+                                  action: #selector(stopFromMenu), keyEquivalent: "")
             stop.target = self
             stop.image = NSImage(systemSymbolName: "stop.circle", accessibilityDescription: nil)
             menu.addItem(stop)
+
+            if translating {
+                let sw = NSMenuItem(title: settings.polishReady ? "Switch to Polish" : "Switch to Dictate",
+                                    action: #selector(switchToDictateFromMenu), keyEquivalent: "")
+                sw.target = self
+                sw.image = NSImage(systemSymbolName: "sparkles", accessibilityDescription: nil)
+                sw.toolTip = "Or press \(settings.shortcut.display) while speaking"
+                menu.addItem(sw)
+            } else if settings.polishReady {
+                let sw = NSMenuItem(title: "Switch to Translate (\(targetShort))",
+                                    action: #selector(switchToTranslateFromMenu), keyEquivalent: "")
+                sw.target = self
+                sw.image = NSImage(systemSymbolName: "translate", accessibilityDescription: nil)
+                sw.toolTip = "Or press \(settings.translateShortcut.display) while speaking"
+                menu.addItem(sw)
+            }
         } else {
             let idle = engine.state == .idle
             let dictate = NSMenuItem(title: "Start Dictation", action: #selector(dictateFromMenu), keyEquivalent: "")
@@ -304,6 +320,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func pickLanguage(_ sender: NSMenuItem) {
         guard let name = sender.representedObject as? String else { return }
         settings.translateLanguage = name
+        engine.refreshTargetLanguage()
     }
 
     @objc private func openTranslate() { showSettings(.translate) }
@@ -311,6 +328,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuDelegate {
     @objc private func dictateFromMenu() { pressFromMenu(.dictate) }
 
     @objc private func translateFromMenu() { pressFromMenu(.translate) }
+
+    @objc private func stopFromMenu() {
+        // Let the menu close and the previous app regain focus first.
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.15) { DictationEngine.shared.stopFromMenu() }
+    }
+
+    @objc private func switchToDictateFromMenu() {
+        engine.switchIntent(to: .dictate)
+    }
+
+    @objc private func switchToTranslateFromMenu() {
+        engine.switchIntent(to: .translate)
+    }
 
     private func pressFromMenu(_ intent: DictationEngine.Intent) {
         // Let the menu close and the previous app regain focus first.

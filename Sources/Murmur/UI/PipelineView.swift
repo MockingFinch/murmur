@@ -81,7 +81,11 @@ struct PipelineFlowCard: View {
                     RouteLegend(caps: settings.translateShortcut.caps,
                                 stages: "Speech → Polish → \(targetLanguage)",
                                 tint: Color(hex: 0x3DD6C0))
-                    Spacer(minLength: 0)
+                    Spacer(minLength: 8)
+                    Text("Switch modes mid-sentence")
+                        .font(.system(size: 11))
+                        .foregroundStyle(.tertiary)
+                        .lineLimit(1)
                 }
             }
         }

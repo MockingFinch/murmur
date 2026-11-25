@@ -171,7 +171,7 @@ After that, press <kbd>⌃</kbd> <kbd>X</kbd> anywhere and start talking.
 | <kbd>⌃</kbd> <kbd>X</kbd> | Dictate, polish, and paste | Rewrite the selection with your prompt |
 | <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> | Dictate, polish, translate, and paste | Translate the selection |
 
-- Tap to toggle for longer recordings, or hold the shortcut while speaking and release to stop immediately. Either shortcut stops an active toggle dictation; whichever one you pressed to start determines whether it gets translated.
+- Tap to toggle for longer recordings, or hold the shortcut while speaking and release to stop immediately. Press the same shortcut again to finish, or press the other shortcut mid-dictation (or while polishing) to switch between Polish and Translate without losing what you've said.
 - Press <kbd>Esc</kbd> while recording to cancel and discard it (long recordings ask for a second <kbd>Esc</kbd> to prevent accidental loss). Once you've stopped talking, choose **Cancel** from the menu bar instead.
 - Both shortcuts can be remapped: <kbd>⌃</kbd> <kbd>X</kbd> on the **General** page, and <kbd>⌃</kbd> <kbd>⌘</kbd> <kbd>X</kbd> on the **Translate** page.
 - Single recordings run up to 15 minutes (the timer turns amber in the final minute, then finishes and pastes as usual).

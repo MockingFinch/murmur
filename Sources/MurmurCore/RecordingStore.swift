@@ -62,6 +62,14 @@ public final class RecordingStore: @unchecked Sendable {
 
     public func audio(_ id: String) -> Data? { try? Data(contentsOf: audioURL(id)) }
 
+    /// Updates the saved pipeline intent (for example, when switching modes mid-dictation).
+    public func update(id: String, translate: Bool) {
+        let url = metaURL(id)
+        let existing = (try? Data(contentsOf: url)).flatMap { try? JSONDecoder().decode(Meta.self, from: $0) }
+        let meta = Meta(date: existing?.date ?? Date(), translate: translate)
+        try? JSONEncoder().encode(meta).write(to: url, options: .atomic)
+    }
+
     public func delete(_ id: String) {
         try? FileManager.default.removeItem(at: audioURL(id))
         try? FileManager.default.removeItem(at: metaURL(id))

@@ -73,6 +73,13 @@ final class HUDModel {
         var detail: String?
     }
 
+    /// Brief inline confirmation when switching between Polish and Translate mid-session.
+    struct ModeNotice: Equatable {
+        enum Tone: Equatable { case polish, translate, warning }
+        var tone: Tone
+        var text: String
+    }
+
     /// nil: hidden.
     var mode: Mode? {
         didSet {
@@ -95,6 +102,8 @@ final class HUDModel {
     var link = Link.live
     /// Set briefly after a first Esc press on a substantial recording.
     var escapeConfirm = false
+    /// Brief inline badge shown after switching between Polish and Translate mid-session.
+    var modeNotice: ModeNotice?
     /// Countdown seconds shown in the final moments before quiet auto-stop triggers.
     var quietCountdown: Int?
     /// Increments to pulse the status icon for a busy shortcut or an error.
@@ -106,10 +115,12 @@ final class HUDModel {
     @ObservationIgnored var onModeChange: ((Mode?, Mode?) -> Void)?
     @ObservationIgnored private var dismissal: Task<Void, Never>?
     @ObservationIgnored private var escapeReset: Task<Void, Never>?
+    @ObservationIgnored private var modeNoticeReset: Task<Void, Never>?
 
     func reset() {
         dismissal?.cancel()
         clearEscapeConfirm()
+        clearModeNotice()
         pipeline = nil
         liveText = ""
         preview = ""
@@ -129,6 +140,43 @@ final class HUDModel {
         if target != nil { stages.append(.translate) }
         pipeline = Pipeline(stages: stages, active: .speech, targetLanguage: target)
         mode = .listening
+    }
+
+    /// Updates the live pipeline stages when switching between Polish and Translate
+    /// mid-session, preserving whichever stages are already completed or active.
+    func updatePipelineMode(translatingTo target: String?, polishEnabled: Bool? = nil) {
+        self.target = target
+        let polish = polishEnabled ?? AppSettings.shared.polishReady
+        var stages: [Stage] = [.speech]
+        if polish { stages.append(.polish) }
+        if target != nil { stages.append(.translate) }
+        if var p = pipeline {
+            p.stages = stages
+            p.targetLanguage = target
+            if target == nil {
+                p.completed.remove(.translate)
+                p.skipped.remove(.translate)
+            }
+            pipeline = p
+        } else {
+            pipeline = Pipeline(stages: stages, active: .speech, targetLanguage: target)
+        }
+    }
+
+    func showModeNotice(_ notice: ModeNotice, hold: Double = 1.9) {
+        modeNoticeReset?.cancel()
+        modeNotice = notice
+        modeNoticeReset = Task { [weak self] in
+            try? await Task.sleep(nanoseconds: UInt64(hold * 1_000_000_000))
+            guard !Task.isCancelled else { return }
+            self?.modeNotice = nil
+        }
+    }
+
+    func clearModeNotice() {
+        modeNoticeReset?.cancel()
+        modeNoticeReset = nil
+        if modeNotice != nil { modeNotice = nil }
     }
 
     func advancePipeline(completed stage: Stage, next: Stage?) {
@@ -195,6 +243,7 @@ final class HUDModel {
     func finish(_ mode: Mode) {
         dismissal?.cancel()
         clearEscapeConfirm()
+        clearModeNotice()
         quietCountdown = nil
         if case .done = mode { completePipeline() }
         self.mode = mode
@@ -216,6 +265,7 @@ final class HUDModel {
     func hide() {
         dismissal?.cancel()
         clearEscapeConfirm()
+        clearModeNotice()
         quietCountdown = nil
         mode = nil
         level = 0

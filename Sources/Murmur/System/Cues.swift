@@ -6,6 +6,8 @@ import AppKit
 /// The cues trace a calm F-major pentatonic arc across a session:
 /// - `start`: soft rising fourth (C4 → F4, mic live)
 /// - `stop`: cushioned upward nudge (F4 → G4, captured and entering the pipeline)
+/// - `switchToTranslate`: soft rising third (F4 → A4, added Translate mid-session)
+/// - `switchToPolish`: soft settling third (A4 → F4, switched back to Polish mid-session)
 /// - `stage`: single feather-soft wooden droplet (A4, Polish → Translate handoff)
 /// - `done`: warm open fifth (F4 → C5, text landed)
 /// - `doneBig`: plush F-major bloom (C4 → F4 → A4 → C5) for long or translated takes
@@ -13,7 +15,7 @@ import AppKit
 /// - `problem`: calm low double tap (E4 → B3)
 @MainActor
 enum Cue {
-    case start, stop, stage, done, doneBig, cancel, problem
+    case start, stop, switchToTranslate, switchToPolish, stage, done, doneBig, cancel, problem
 
     private static var cache: [String: NSSound] = [:]
 
@@ -34,6 +36,7 @@ enum Cue {
         switch cue {
         case .start: return 0.25
         case .stop: return 0.19
+        case .switchToTranslate, .switchToPolish: return 0.16
         case .stage: return 0.15
         case .done: return 0.21
         case .doneBig: return 0.22
@@ -64,6 +67,18 @@ enum Cue {
             return synth([
                 Note(at: 0.000, freq: 349.23, length: 0.105, amp: 0.36),
                 Note(at: 0.048, freq: 392.00, length: 0.145, amp: 0.40),
+            ])
+        case .switchToTranslate:
+            // F4 -> A4: light rising third when enabling Translate mid-session
+            return synth([
+                Note(at: 0.000, freq: 349.23, length: 0.095, amp: 0.36, attack: 0.014),
+                Note(at: 0.044, freq: 440.00, length: 0.140, amp: 0.40, attack: 0.015),
+            ])
+        case .switchToPolish:
+            // A4 -> F4: soft settling third when switching back to Polish mid-session
+            return synth([
+                Note(at: 0.000, freq: 440.00, length: 0.095, amp: 0.36, attack: 0.014),
+                Note(at: 0.044, freq: 349.23, length: 0.140, amp: 0.40, attack: 0.015),
             ])
         case .stage:
             // Single feather-soft A4 droplet when Polish hands off to Translate

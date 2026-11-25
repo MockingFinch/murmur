@@ -202,7 +202,7 @@ private struct HUDContents: View {
     }
 
     private var hasStatusBadge: Bool {
-        model.escapeConfirm || model.quietCountdown != nil || model.link != .live
+        model.escapeConfirm || model.modeNotice != nil || model.quietCountdown != nil || model.link != .live
     }
 
     /// Wide enough for a comfortable line of text; never wider, whatever is said.
@@ -227,7 +227,9 @@ private struct HUDContents: View {
             return min(Self.textWidth, base + targetExtra + alertExtra)
         case .transcribing:
             if line != nil { return Self.textWidth }
-            return activePipeline.map { $0.stages.count >= 3 ? 310 : 244 } ?? 214
+            let base: CGFloat = activePipeline.map { $0.stages.count >= 3 ? 310 : 244 } ?? 214
+            let alertExtra: CGFloat = model.modeNotice != nil ? 148 : 0
+            return min(Self.textWidth, base + alertExtra)
         case .model:
             return Self.textWidth
         case .done:
@@ -423,6 +425,10 @@ private struct HUDContents: View {
                 if model.escapeConfirm {
                     AlertBadge(symbol: "xmark.circle", text: "Esc again to discard", pulse: false)
                         .transition(swapTransition)
+                } else if let notice = model.modeNotice {
+                    ModeSwitchBadge(notice: notice)
+                        .id(notice.text)
+                        .transition(swapTransition)
                 } else if let secs = model.quietCountdown {
                     AlertBadge(symbol: "timer", text: "Stopping in \(secs)s", pulse: false)
                         .transition(swapTransition)
@@ -433,13 +439,33 @@ private struct HUDContents: View {
                 ElapsedLabel(since: model.startedAt, limit: DictationEngine.maxRecording)
             }
             .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 0.8),
-                       value: "\(model.link)|\(model.escapeConfirm)|\(model.quietCountdown ?? -1)")
+                       value: "\(model.link)|\(model.escapeConfirm)|\(model.modeNotice?.text ?? "")|\(model.quietCountdown ?? -1)")
             // The waveform gives way; the time and the language never do.
             .fixedSize()
             .transition(.opacity)
+        } else if case .transcribing = mode {
+            Group {
+                if let notice = model.modeNotice {
+                    ModeSwitchBadge(notice: notice)
+                        .id(notice.text)
+                        .fixedSize()
+                        .transition(swapTransition)
+                }
+            }
+            .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 0.8), value: model.modeNotice)
         } else if case .model = mode {
-            WaitLabel(since: model.waitingSince)
-                .transition(.opacity)
+            Group {
+                if let notice = model.modeNotice {
+                    ModeSwitchBadge(notice: notice)
+                        .id(notice.text)
+                        .fixedSize()
+                        .transition(swapTransition)
+                } else {
+                    WaitLabel(since: model.waitingSince)
+                        .transition(.opacity)
+                }
+            }
+            .animation(reduceMotion ? .easeOut(duration: 0.15) : .spring(response: 0.35, dampingFraction: 0.8), value: model.modeNotice)
         }
     }
 
@@ -725,6 +751,45 @@ private struct AlertBadge: View {
         .padding(.vertical, 3)
         .background(Capsule().fill(Brand.amber.opacity(0.14)))
         .overlay(Capsule().strokeBorder(Brand.amber.opacity(0.28), lineWidth: 0.5))
+    }
+}
+
+/// Inline confirmation pill shown briefly after switching between Polish and Translate mid-session.
+private struct ModeSwitchBadge: View {
+    let notice: HUDModel.ModeNotice
+
+    private var tint: Color {
+        switch notice.tone {
+        case .polish: return Brand.violet
+        case .translate: return Color(hex: 0x3DD6C0)
+        case .warning: return Brand.amber
+        }
+    }
+
+    private var symbol: String {
+        switch notice.tone {
+        case .polish: return "sparkles"
+        case .translate: return "translate"
+        case .warning: return "exclamationmark.circle"
+        }
+    }
+
+    var body: some View {
+        HStack(spacing: 4.5) {
+            Image(systemName: symbol)
+                .font(.system(size: 10, weight: .semibold))
+            Text(notice.text)
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
+                .lineLimit(1)
+                .truncationMode(.tail)
+                .frame(maxWidth: 165, alignment: .leading)
+                .fixedSize(horizontal: true, vertical: false)
+        }
+        .foregroundStyle(tint)
+        .padding(.horizontal, 8)
+        .padding(.vertical, 3)
+        .background(Capsule().fill(tint.opacity(0.15)))
+        .overlay(Capsule().strokeBorder(tint.opacity(0.30), lineWidth: 0.5))
     }
 }
 

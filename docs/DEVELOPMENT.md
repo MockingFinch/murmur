@@ -124,7 +124,7 @@ Summary of how Murmur behaves under network, audio, and API errors:
 **Local recordings**
 
 - Audio is flushed to `~/Library/Application Support/Murmur/Recordings` (directory `0700`, files `0600`) continuously during capture and deleted as soon as complete text is delivered.
-- Incomplete or failed sessions keep their `.pcm` file on disk so you can run **Transcribe Again** from the menu bar (including the original polish/translate pipeline).
+- Incomplete or failed sessions keep their `.pcm` file on disk so you can run **Transcribe Again** from the menu bar (including the active polish/translate pipeline, updated automatically if you switched modes mid-dictation).
 - Recordings interrupted by a crash or app quit are surfaced at next launch.
 - Pressing `Esc` while listening (including while reconnecting) cancels immediately for short takes (< 10 seconds and < 20 visible characters) and requires a second `Esc` within 2.5 seconds once substantial speech has been captured, preventing accidental deletion of long dictations. Using **Cancel** from the menu bar after stopping speaking aborts the wait while preserving the recording on disk.
 - Saved recordings expire after 7 days; clips shorter than 0.3 seconds are discarded automatically. Individual saved recordings can be transcribed or deleted from the menu bar, and the most recent warning or error stays accessible in the menu bar until dismissed or cleared by a clean completion.

@@ -51,6 +51,16 @@ enum Snapshots {
                 m.startListening(); m.level = 0.1; m.quietCountdown = 12
                 m.liveText = "Let's review this on Thursday."
             }),
+            ("listening-switched-translate", { m in
+                m.startListening(translatingTo: "English", polishEnabled: true); m.level = 0.45
+                m.liveText = "其实我觉得这个方案还可以，只是时间稍微紧了一点"
+                m.modeNotice = .init(tone: .translate, text: "Switched to English")
+            }),
+            ("listening-switched-polish", { m in
+                m.startListening(polishEnabled: true); m.level = 0.45
+                m.liveText = "So the plan for next week is to ship the first draft on Wednesday."
+                m.modeNotice = .init(tone: .polish, text: "Switched to Polish")
+            }),
             ("arming", { m in m.show(.arming) }),
             ("transcribing", { m in m.show(.transcribing(retry: 0)) }),
             ("reconnecting", { m in m.show(.transcribing(retry: 3)) }),

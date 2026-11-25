@@ -14,9 +14,12 @@ enum Page: String, CaseIterable, Identifiable, Hashable {
 ///   translate (⌃⌘X) ┬─ text selected → translate it → replace it
 ///                   └─ otherwise → the same dictation, then polish → translate → insert
 ///
-///   The shortcut that starts a session decides what it is; either one ends
-///   it. Holding the starting shortcut past 0.4 s stops on release. Esc cancels
-///   a recording while listening (double-Esc once substantial speech exists).
+///   The shortcut that starts a session decides its initial mode. Pressing the
+///   same shortcut stops listening; pressing the other shortcut mid-dictation
+///   (or while transcribing/polishing) switches between Polish and Translate
+///   without losing any speech. Holding the starting shortcut past 0.4 s stops
+///   on release. Esc cancels a recording while listening (double-Esc once
+///   substantial speech exists).
 @MainActor
 final class DictationEngine {
     enum State { case idle, arming, listening, working }
@@ -75,6 +78,7 @@ final class DictationEngine {
     /// Hybrid tap-to-toggle / hold-to-talk tracking.
     private var pressStartedAt: Date?
     private var holdSessionRun: Int?
+    private var holdSessionIntent: Intent?
     private var pendingHoldStopRun: Int?
     /// Numbers sessions: a late callback from a cancelled one changes nothing.
     private var run = 0
@@ -88,8 +92,25 @@ final class DictationEngine {
 
     // MARK: Entry points
 
-    /// A press of either shortcut: starts a session with that intent, or
-    /// ends the one that's listening, whichever shortcut started it.
+    /// Whether the active session can still switch between Polish and Translate
+    /// (while listening, arming, transcribing, or polishing — before translation starts).
+    var canSwitchMode: Bool {
+        switch state {
+        case .arming, .listening:
+            return true
+        case .working:
+            switch hud.mode {
+            case .transcribing, .model(.polish, _, _): return true
+            default: return false
+            }
+        case .idle:
+            return false
+        }
+    }
+
+    /// A press of either shortcut: starts a session when idle, finishes when
+    /// listening with the active mode's shortcut, or switches modes seamlessly
+    /// when the other shortcut is pressed mid-session.
     func press(_ intent: Intent) {
         let now = Date()
         guard now.timeIntervalSince(lastPress) > 0.25 else { return }
@@ -99,22 +120,81 @@ final class DictationEngine {
             pressStartedAt = now
             begin(intent)
             holdSessionRun = run
+            holdSessionIntent = intent
             pendingHoldStopRun = nil
         case .listening:
-            holdSessionRun = nil
-            pendingHoldStopRun = nil
-            stopListening()
-        case .arming, .working:
-            hud.nudge()
+            clearHoldTracking()
+            if intent == self.intent {
+                stopListening()
+            } else {
+                switchIntent(to: intent)
+            }
+        case .arming:
+            if intent != self.intent {
+                clearHoldTracking()
+                switchIntent(to: intent)
+            } else {
+                hud.nudge()
+            }
+        case .working:
+            if intent != self.intent, canSwitchMode {
+                switchIntent(to: intent)
+            } else {
+                hud.nudge()
+            }
         }
+    }
+
+    /// Stops an active listening session explicitly (e.g., from the menu bar).
+    func stopFromMenu() {
+        guard state == .listening else { return }
+        clearHoldTracking()
+        stopListening()
+    }
+
+    /// Switches between Polish (.dictate) and Translate (.translate) without
+    /// interrupting the microphone, Doubao stream, or ongoing polish pass.
+    func switchIntent(to newIntent: Intent) {
+        guard newIntent != intent, canSwitchMode else { return }
+        if newIntent == .translate, !settings.polishReady {
+            hud.showModeNotice(.init(tone: .warning, text: "Set up a model to translate"), hold: 2.4)
+            hud.nudge()
+            Cue.play(.problem)
+            return
+        }
+        intent = newIntent
+        hud.clearEscapeConfirm()
+        if let saved {
+            recordings.update(id: saved, translate: newIntent == .translate)
+        }
+        let target = newIntent == .translate ? targetLanguage : nil
+        hud.updatePipelineMode(translatingTo: target, polishEnabled: settings.polishReady)
+        if newIntent == .translate {
+            let native = TranslationLanguages.native(targetLanguage)
+            hud.showModeNotice(.init(tone: .translate, text: "Switched to \(native)"))
+            Cue.play(.switchToTranslate)
+        } else {
+            let label = settings.polishReady ? "Switched to Polish" : "Switched to Dictate"
+            hud.showModeNotice(.init(tone: .polish, text: label))
+            Cue.play(.switchToPolish)
+        }
+        hud.nudge()
+    }
+
+    /// Refreshes the capsule's target language label if the user changes it from
+    /// the menu bar while a translating session is still listening or polishing.
+    func refreshTargetLanguage() {
+        guard intent == .translate, canSwitchMode else { return }
+        hud.updatePipelineMode(translatingTo: targetLanguage, polishEnabled: settings.polishReady)
     }
 
     /// Releasing a shortcut after holding it at least `holdThreshold` stops
     /// the dictation it started (hybrid hold-to-talk). Quick taps stay in toggle mode.
     func release(_ intent: Intent) {
-        guard holdSessionRun == run, let started = pressStartedAt else { return }
+        guard holdSessionRun == run, holdSessionIntent == intent, let started = pressStartedAt else { return }
         let held = Date().timeIntervalSince(started)
         holdSessionRun = nil
+        holdSessionIntent = nil
         pressStartedAt = nil
         guard held >= Self.holdThreshold else { return }
         if state == .listening {
@@ -122,6 +202,13 @@ final class DictationEngine {
         } else if state == .arming {
             pendingHoldStopRun = run
         }
+    }
+
+    private func clearHoldTracking() {
+        holdSessionRun = nil
+        holdSessionIntent = nil
+        pendingHoldStopRun = nil
+        pressStartedAt = nil
     }
 
     /// Global Esc while listening: cancels immediately for quick false starts,
@@ -147,9 +234,7 @@ final class DictationEngine {
         work?.cancel()
         autoStop?.cancel()
         silence = nil
-        holdSessionRun = nil
-        pendingHoldStopRun = nil
-        pressStartedAt = nil
+        clearHoldTracking()
         transcriber?.cancel()
         capture?.stop()
         writer?.close()
@@ -344,9 +429,7 @@ final class DictationEngine {
         state = .working
         autoStop?.cancel()
         silence = nil
-        holdSessionRun = nil
-        pendingHoldStopRun = nil
-        pressStartedAt = nil
+        clearHoldTracking()
         capture.stop()
         writer?.close()
         writer = nil
@@ -497,6 +580,7 @@ final class DictationEngine {
         var translated = false
         var translateProblem: String?
         if intent == .translate, polishProblem == nil, !text.isEmpty {
+            hud.clearModeNotice()
             hud.advancePipeline(completed: .polish, next: .translate)
             Cue.play(.stage)
             hud.preview = text
